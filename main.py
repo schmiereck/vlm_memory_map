@@ -184,10 +184,11 @@ class HexapodApp:
             confirm = self._robot.execute(action)
             self._log(confirm)
 
-            # Derive robot position from action if VLM did not supply robot_pose.
-            # This keeps the map trace moving even when the model omits robot_pose.
-            if "robot_pose" not in response:
-                self._update_position_from_action(action)
+            # Always use dead reckoning for robot pose.
+            # The VLM's robot_pose is unreliable (wrong coordinate convention),
+            # so we strip it and compute the pose ourselves.
+            response.pop("robot_pose", None)
+            self._update_position_from_action(action)
 
             # Update memory
             summary = self._map.process_vlm_response(response)
@@ -231,10 +232,10 @@ class HexapodApp:
         yaw = pose.yaw
 
         if action_type == "forward":
-            x += distance_m * math.sin(yaw)
+            x -= distance_m * math.sin(yaw)
             y += distance_m * math.cos(yaw)
         elif action_type == "backward":
-            x -= distance_m * math.sin(yaw)
+            x += distance_m * math.sin(yaw)
             y -= distance_m * math.cos(yaw)
         elif action_type == "turn_left":
             yaw += angle_rad

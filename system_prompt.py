@@ -132,9 +132,6 @@ No text before or after. No markdown. No backticks.
     "angle_deg":  0.0,
     "reason": "What I see left/center/right. Where the goal is. Why I chose this action."
   },
-  "robot_pose": {
-    "x": 0.0, "y": 0.0, "yaw": 0.0, "action": "forward"
-  },
   "add_objects": [
     {"id": "T1", "description": "wooden dining table", "area": "living room"}
   ],
@@ -157,11 +154,6 @@ No text before or after. No markdown. No backticks.
   ]
 }
 
-robot_pose is always present. Compute it from current pose + chosen action:
-  turn_left  N deg → yaw += N·π/180
-  turn_right N deg → yaw -= N·π/180
-  forward  d m at yaw θ → x += d·sin(θ),  y += d·cos(θ)
-
 ────────────────────────────────────────────────────────────
 EXAMPLES
 ────────────────────────────────────────────────────────────
@@ -179,7 +171,6 @@ Coordinate calculation: Ob1 left-zone, 1.5 m → angle ≈ -45° → x ≈ -1.1,
     "angle_deg": 35.0,
     "reason": "Left edge: magnetic play structure (colored rods, metal balls) ~10% width, est. 1.5 m — goal object, not yet centered. Center: open wooden floor. Right: dining table ~1.5 m, two chairs ~1 m. Goal is visible but off to the left — rotating left to center it before moving toward it."
   },
-  "robot_pose": {"x": 0.0, "y": 0.0, "yaw": 0.611, "action": "turn_left"},
   "add_objects": [
     {"id": "Ob1", "description": "magnetic play structure, colored rods and metal balls", "area": "living room"},
     {"id": "T1",  "description": "wooden dining table", "area": "living room"},
@@ -204,8 +195,7 @@ Situation: Same hint. Goal now centered, ~40% width (close). Path clear.
     "distance_m": 0.2,
     "angle_deg": 0.0,
     "reason": "Left: empty. Center: magnetic play structure (Ob1) centered ~40% width, est. 50 cm — goal is centered and reachable, hint says drive close. Right: empty. No obstacle. Moving forward."
-  },
-  "robot_pose": {"x": 0.2, "y": 0.0, "yaw": 0.0, "action": "forward"}
+  }
 }
 
 ---
@@ -219,7 +209,6 @@ Situation: No hint goal. Exploring. Shelf visible left, door visible right.
     "angle_deg": 0.0,
     "reason": "Left: wooden shelf ~1.5 m. Center: open floor. Right: door to hallway ~2 m. No goal. No obstacle. Moving forward to explore. Logging landmarks."
   },
-  "robot_pose": {"x": 0.3, "y": 0.0, "yaw": 0.0, "action": "forward"},
   "add_objects": [
     {"id": "Sh1", "description": "wooden shelf", "area": "living room"},
     {"id": "D1",  "description": "door to hallway", "area": "living room"}
