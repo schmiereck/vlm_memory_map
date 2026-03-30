@@ -236,8 +236,12 @@ class CoordinateManager:
                              fill=(60, 120, 200), outline=(20, 60, 140))
             draw.text((px + 8, py - 10), obj.id, fill=(20, 20, 120))
 
-        # Robot
+        # View cone (camera field of view, ~60 deg half-angle, ~2 m range)
         rpx, rpy = world_to_pixel(robot_x, robot_y)
+        self._draw_view_cone(img, rpx, rpy, pixel_size, scale_x)
+
+        # Robot (drawn on top of cone)
+        draw = ImageDraw.Draw(img)  # refresh draw handle after paste
         self._draw_robot(draw, rpx, rpy, pixel_size)
 
         return img
@@ -270,6 +274,30 @@ class CoordinateManager:
             for dx, dy in corners
         ]
         draw.polygon(rotated, fill=fill, outline=outline)
+
+    @staticmethod
+    def _draw_view_cone(img: "Image.Image", rx: int, ry: int, pixel_size: int, scale_x: float):
+        """Draw a semi-transparent light-blue view cone in front of the robot.
+
+        The robot always points upward in the robot-centric map, so the cone
+        fans out upward from the robot position.
+        Half-angle ~55 degrees, range ~2.5 m world units.
+        """
+        cone_range_px = int(2.5 * scale_x)
+        half_deg = 55
+        steps = 20
+        points = [(rx, ry)]
+        for i in range(steps + 1):
+            angle_rad = math.radians(-half_deg + (2 * half_deg * i / steps))
+            px = rx + cone_range_px * math.sin(angle_rad)
+            py = ry - cone_range_px * math.cos(angle_rad)
+            points.append((px, py))
+
+        cone_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        cone_draw  = ImageDraw.Draw(cone_layer)
+        cone_draw.polygon(points, fill=(100, 200, 255, 55), outline=(60, 160, 220, 140))
+        merged = Image.alpha_composite(img.convert("RGBA"), cone_layer)
+        img.paste(merged.convert("RGB"))
 
     @staticmethod
     def _draw_robot(draw, rx, ry, pixel_size):

@@ -10,10 +10,51 @@ Your two roles, in order of priority:
 INPUT
 ────────────────────────────────────────────────────────────
 You receive a combined image every step:
-  TOP half    — live camera view (what the robot currently sees)
-  BOTTOM half — top-down map of everything logged so far
-               (red triangle = robot, tip = heading, red line = trace,
-                blue shapes = known objects with their ID)
+
+  ┌───────────────────────────┐
+  │   TOP HALF: camera view   │  ← what the robot currently sees through its lens
+  ├───────────────────────────┤
+  │  BOTTOM HALF: top-down    │  ← bird's-eye map, robot-centred
+  │         map               │
+  └───────────────────────────┘
+
+MAP LEGEND (bottom half):
+  • Red triangle  = robot. The TIP of the triangle points in the robot's
+                    current heading direction, which is ALWAYS toward the
+                    TOP of the map image. "In front of the robot" = above
+                    the triangle on the map. "Left" = left on the map.
+  • Light-blue cone = camera field of view (~110° wide, ~2.5 m range).
+                    Everything inside this cone is currently visible in
+                    the camera image (top half).
+  • Red line      = movement trace (where the robot has been).
+  • Blue shapes   = known objects with their ID labels.
+  • Grid          = 1 metre per cell.
+
+COORDINATE SYSTEM:
+  • Origin (0, 0) = robot start position.
+  • x positive = East (right at start), y positive = North (forward at start).
+  • Robot heading yaw = 0 means facing North (y+).
+  • All object positions are WORLD coordinates, NOT relative to the robot.
+
+HOW TO ESTIMATE AN OBJECT'S WORLD POSITION:
+  Step A — Estimate the object's distance from the camera image:
+    fills > 50% width → ~0.3 m away
+    fills > 30% width → ~0.5 m away
+    fills > 15% width → ~1.0 m away
+    fills ~10% width  → ~1.5 m away
+    fills ~5%  width  → ~2.5 m away
+  Step B — Estimate the angle relative to forward:
+    Object in left 30% of image  → roughly -45° to the left of heading
+    Object in center 40%         → roughly straight ahead (0°)
+    Object in right 30%          → roughly +45° to the right of heading
+  Step C — Convert to world coordinates:
+    dx_robot = distance × sin(angle)
+    dy_robot = distance × cos(angle)
+    world_x  = robot_x + dx_robot × cos(yaw) - dy_robot × sin(yaw)
+    world_y  = robot_y + dx_robot × sin(yaw) + dy_robot × cos(yaw)
+  Example: robot at (0,0) yaw=0, object fills 10% width in LEFT zone:
+    distance ≈ 1.5 m, angle ≈ -45° → world ≈ (-1.1, 1.1)
+    NOT (-0.5, 0) — objects are always in FRONT of the robot, not beside it.
 
 Plus a JSON block:
   robot       — current pose (x, y, yaw in metres / radians)
@@ -127,7 +168,9 @@ EXAMPLES
 
 Situation: Hint = "find the magnetic play structure and drive close to it".
 Camera: play structure barely visible at left edge (~10% width); dining table
-and two chairs visible right/center.
+and two chairs visible right/center. Robot at (0,0) yaw=0.
+Coordinate calculation: Ob1 left-zone, 1.5 m → angle ≈ -45° → x ≈ -1.1, y ≈ 1.1
+                        T1  right-zone, 1.5 m → angle ≈ +45° → x ≈ +1.1, y ≈ 1.1
 
 {
   "action": {
@@ -144,10 +187,10 @@ and two chairs visible right/center.
     {"id": "C2",  "description": "wooden chair", "area": "living room"}
   ],
   "add_coordinates": [
-    {"id": "Ob1", "position": {"x": -1.3, "y": 0.8}, "size": {"x": 0.4, "y": 0.4}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "T1",  "position": {"x":  0.8, "y": 1.5}, "size": {"x": 1.2, "y": 0.8}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "C1",  "position": {"x":  0.5, "y": 1.0}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "C2",  "position": {"x":  1.1, "y": 1.0}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"}
+    {"id": "Ob1", "position": {"x": -1.1, "y": 1.1}, "size": {"x": 0.4, "y": 0.4}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
+    {"id": "T1",  "position": {"x":  1.1, "y": 1.1}, "size": {"x": 1.2, "y": 0.8}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
+    {"id": "C1",  "position": {"x":  0.7, "y": 1.0}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
+    {"id": "C2",  "position": {"x":  1.4, "y": 1.0}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"}
   ]
 }
 
