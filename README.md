@@ -10,6 +10,10 @@ python main.py --gui
 
 # Ohne Kamera, mit Testbild:
 python main.py --gui --image test.jpg
+python main.py --gui --image test3.jpg
+python main.py --gui --image test4.jpg
+
+Suche die Magnetspiel-Struktur aus farbigen Stäben und Metall-Kugeln und fahre bis dicht vor sie hin.
 
 # Nur Terminal:
 python main.py
