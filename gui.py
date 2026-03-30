@@ -1,0 +1,253 @@
+"""
+gui.py
+======
+Tkinter GUI for the hexapod spatial memory system.
+
+Layout:
+┌─────────────────────────────────────────────────────┐
+│  [Combined Image — camera top, map bottom]           │
+├──────────────────────┬──────────────────────────────┤
+│  Log                 │  Hints                        │
+│  (scrollable)        │  [permanent] [session]        │
+│                      │  [one_time]                   │
+│                      │  Text entry + Add button      │
+├──────────────────────┴──────────────────────────────┤
+│  [ Next Step ]                    Status label       │
+└─────────────────────────────────────────────────────┘
+
+Requires: tkinter (built-in), Pillow
+"""
+
+import threading
+import tkinter as tk
+from tkinter import ttk, scrolledtext
+from typing import Optional
+
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+
+class HexapodGui:
+    """Main application window."""
+
+    IMG_WIDTH  = 768
+    IMG_HEIGHT = 768   # camera (384) + map (384)
+    WIN_TITLE  = "Hexapod Spatial Memory"
+
+    def __init__(self, app):
+        self._app = app
+        self._root = tk.Tk()
+        self._root.title(self.WIN_TITLE)
+        self._root.resizable(True, True)
+
+        self._photo_ref: Optional["ImageTk.PhotoImage"] = None
+        self._step_running = False
+
+        self._build_ui()
+        self._register_callbacks()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        root = self._root
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=3)
+        root.rowconfigure(1, weight=2)
+        root.rowconfigure(2, weight=0)
+
+        # ── Row 0: combined image ───────────────────────────────────────
+        img_frame = ttk.Frame(root, relief="sunken", borderwidth=1)
+        img_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=(6, 2))
+
+        self._canvas = tk.Canvas(
+            img_frame,
+            width=self.IMG_WIDTH,
+            height=self.IMG_HEIGHT,
+            bg="#2a2a2a",
+        )
+        self._canvas.pack(fill="both", expand=True)
+        self._canvas.create_text(
+            self.IMG_WIDTH // 2, self.IMG_HEIGHT // 2,
+            text="No image yet",
+            fill="#888888",
+            font=("Helvetica", 14),
+        )
+
+        # ── Row 1: log + hints ─────────────────────────────────────────
+        mid_frame = ttk.Frame(root)
+        mid_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=2)
+        mid_frame.columnconfigure(0, weight=2)
+        mid_frame.columnconfigure(1, weight=1)
+        mid_frame.rowconfigure(0, weight=1)
+
+        # Log panel
+        log_frame = ttk.LabelFrame(mid_frame, text="Log")
+        log_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        self._log_box = scrolledtext.ScrolledText(
+            log_frame, state="disabled", wrap="word",
+            font=("Courier", 9), bg="#1e1e1e", fg="#cccccc",
+            height=10,
+        )
+        self._log_box.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Hints panel
+        hint_frame = ttk.LabelFrame(mid_frame, text="Operator Hints")
+        hint_frame.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        hint_frame.columnconfigure(0, weight=1)
+
+        # Category selector
+        cat_frame = ttk.Frame(hint_frame)
+        cat_frame.pack(fill="x", padx=4, pady=(4, 0))
+        ttk.Label(cat_frame, text="Category:").pack(side="left")
+        self._hint_cat = tk.StringVar(value="one_time")
+        for cat, label in [("permanent", "Permanent"),
+                            ("session",   "Session"),
+                            ("one_time",  "One-time")]:
+            ttk.Radiobutton(
+                cat_frame, text=label,
+                variable=self._hint_cat, value=cat,
+            ).pack(side="left", padx=2)
+
+        # Hint text entry
+        entry_frame = ttk.Frame(hint_frame)
+        entry_frame.pack(fill="x", padx=4, pady=4)
+        self._hint_entry = ttk.Entry(entry_frame)
+        self._hint_entry.pack(side="left", fill="x", expand=True)
+        self._hint_entry.bind("<Return>", lambda _: self._on_add_hint())
+        ttk.Button(entry_frame, text="Add", command=self._on_add_hint).pack(side="left", padx=2)
+
+        # Hint list
+        self._hint_list = tk.Listbox(
+            hint_frame, height=6, font=("Courier", 8),
+            bg="#1e1e1e", fg="#cccccc", selectmode="single",
+        )
+        self._hint_list.pack(fill="both", expand=True, padx=4, pady=(0, 2))
+        ttk.Button(hint_frame, text="Delete selected",
+                   command=self._on_delete_hint).pack(padx=4, pady=(0, 4))
+
+        # ── Row 2: controls ────────────────────────────────────────────
+        ctrl_frame = ttk.Frame(root)
+        ctrl_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
+        ctrl_frame.columnconfigure(1, weight=1)
+
+        self._step_btn = ttk.Button(
+            ctrl_frame, text="▶  Next Step",
+            command=self._on_step, width=18,
+        )
+        self._step_btn.grid(row=0, column=0, padx=(0, 8))
+
+        self._status_var = tk.StringVar(value="Not started")
+        ttk.Label(ctrl_frame, textvariable=self._status_var,
+                  foreground="#888888").grid(row=0, column=1, sticky="w")
+
+    # ------------------------------------------------------------------
+    # Callbacks registered with HexapodApp
+    # ------------------------------------------------------------------
+
+    def _register_callbacks(self) -> None:
+        self._app._on_log    = self._log
+        self._app._on_update = self._on_update
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+
+    def _on_step(self) -> None:
+        if self._step_running:
+            return
+        self._step_running = True
+        self._step_btn.config(state="disabled")
+        self._set_status("Running …")
+        self._app.trigger_step()
+
+    def _on_add_hint(self) -> None:
+        text = self._hint_entry.get().strip()
+        if not text:
+            return
+        cat = self._hint_cat.get()
+        self._app.add_hint(text, cat)
+        self._hint_entry.delete(0, "end")
+        self._refresh_hints()
+
+    def _on_delete_hint(self) -> None:
+        sel = self._hint_list.curselection()
+        if not sel:
+            return
+        line = self._hint_list.get(sel[0])
+        # Format is "[category] text"
+        if "] " in line:
+            cat, text = line.split("] ", 1)
+            cat = cat.lstrip("[")
+            self._app.remove_hint(text, cat)
+        self._refresh_hints()
+
+    # ------------------------------------------------------------------
+    # Update callbacks (called from background thread → schedule via after)
+    # ------------------------------------------------------------------
+
+    def _on_update(self, combined_image, summary: dict) -> None:
+        self._root.after(0, self._apply_update, combined_image, summary)
+
+    def _apply_update(self, combined_image, summary: dict) -> None:
+        if combined_image is not None and PIL_AVAILABLE:
+            self._show_image(combined_image)
+        self._refresh_hints()
+        self._set_status(
+            f"Objects: {len(self._app._map.objects)}  "
+            f"Trace: {len(self._app._map.positions)}"
+        )
+        self._step_running = False
+        self._step_btn.config(state="normal")
+
+    def _log(self, message: str) -> None:
+        """Thread-safe log append."""
+        self._root.after(0, self._append_log, message)
+
+    def _append_log(self, message: str) -> None:
+        self._log_box.config(state="normal")
+        self._log_box.insert("end", message + "\n")
+        self._log_box.see("end")
+        self._log_box.config(state="disabled")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _show_image(self, image: "Image.Image") -> None:
+        cw = self._canvas.winfo_width()  or self.IMG_WIDTH
+        ch = self._canvas.winfo_height() or self.IMG_HEIGHT
+        img = image.copy()
+        img.thumbnail((cw, ch), Image.LANCZOS)
+        self._photo_ref = ImageTk.PhotoImage(img)
+        self._canvas.delete("all")
+        self._canvas.create_image(cw // 2, ch // 2, image=self._photo_ref, anchor="center")
+
+    def _refresh_hints(self) -> None:
+        hints = self._app.get_hints()
+        self._hint_list.delete(0, "end")
+        for cat, items in hints.items():
+            for text in items:
+                self._hint_list.insert("end", f"[{cat}] {text}")
+
+    def _set_status(self, text: str) -> None:
+        self._status_var.set(text)
+
+    # ------------------------------------------------------------------
+    # Run
+    # ------------------------------------------------------------------
+
+    def run(self) -> None:
+        if not self._app.start():
+            self._log("ERROR: Could not start app. Check camera and API key.")
+        self._refresh_hints()
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._root.mainloop()
+
+    def _on_close(self) -> None:
+        self._app.shutdown()
+        self._root.destroy()

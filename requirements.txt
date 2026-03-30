@@ -1,0 +1,13 @@
+# Hexapod Spatial Memory System
+# Install with: pip install -r requirements.txt
+
+# VLM API
+groq>=0.9.0
+
+# Image processing + map rendering
+Pillow>=10.0.0
+
+# Camera capture (laptop webcam)
+opencv-python>=4.8.0
+
+# tkinter is built into Python — no install needed

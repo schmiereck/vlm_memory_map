@@ -1,0 +1,361 @@
+"""
+MapService
+==========
+Primary interface between the robot's spatial memory and the VLM.
+
+VLM Response JSON schema
+------------------------
+{
+  "robot_pose": {                          // optional
+    "x": 0.3, "y": 0.1, "yaw": 0.15,
+    "action": "forward"
+  },
+  "add_objects": [                         // optional
+    {"id": "T1", "description": "großer Wohnzimmertisch", "area": "Wohnzimmer"}
+  ],
+  "add_coordinates": [                     // optional
+    {
+      "id": "T1",
+      "position": {"x": 1.5, "y": 2.0},
+      "size":     {"x": 1.2, "y": 0.8},   // y, z optional
+      "rotation": {"x": null, "y": null, "z": 0.3},
+      "area": "Wohnzimmer"
+    }
+  ],
+  "add_relations": [                       // optional
+    {"object_a": "T1", "relation": "steht an", "object_b": "W1", "area": "Wohnzimmer"}
+  ],
+  "corrections": [                         // optional
+    {"type": "move_object",  "id": "T1", "position": {"x": 1.8, "y": 2.0}},
+    {"type": "rotate_map",   "delta_yaw": 0.1},
+    {"type": "set_robot_pose", "x": 0.0, "y": 0.0, "yaw": 0.0}
+  ]
+}
+
+State JSON returned to VLM
+---------------------------
+{
+  "robot": {"x": 0.3, "y": 0.1, "yaw": 0.15},
+  "objects":   [{"id": "T1", "description": "...", "area": "Wohnzimmer"}, ...],
+  "coordinates": [{"id": "T1", "position": {...}, "size": {...}, ...}, ...],
+  "relations": [{"object_a": "T1", "relation": "steht an", "object_b": "W1"}, ...]
+}
+"""
+
+import json
+from pathlib import Path
+from typing import Optional
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+from object_manager     import ObjectManager,     MapObject
+from relation_manager   import RelationManager,   Relation
+from coordinate_manager import CoordinateManager, ObjectCoordinate, Vec3, TracePoint
+from position_manager   import PositionManager
+
+
+class MapService:
+    """
+    Facade that owns all four managers and exposes two primary methods:
+
+        process_vlm_response(json_dict)  — apply VLM updates to memory
+        get_state(camera_image)          — return state dict + combined image
+    """
+
+    def __init__(self, data_dir: str = "."):
+        base = Path(data_dir)
+        self.objects     = ObjectManager    (str(base / "objects.json"))
+        self.relations   = RelationManager  (str(base / "relations.json"))
+        self.coordinates = CoordinateManager(str(base / "coordinates.json"))
+        self.positions   = PositionManager  (str(base / "position.json"))
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def load_all(self) -> None:
+        self.objects.load()
+        self.relations.load()
+        self.coordinates.load()
+        self.positions.load()
+
+    def save_all(self) -> None:
+        self.objects.save()
+        self.relations.save()
+        self.coordinates.save()
+        self.positions.save()
+
+    # ------------------------------------------------------------------
+    # Primary interface 1: process VLM response
+    # ------------------------------------------------------------------
+
+    def process_vlm_response(self, response: dict) -> dict:
+        """
+        Apply a VLM response dict to the spatial memory.
+
+        Returns a summary dict with counts of applied changes and any
+        warnings (e.g. unknown correction types).
+        """
+        summary = {
+            "robot_pose_updated": False,
+            "objects_added":      0,
+            "coordinates_added":  0,
+            "relations_added":    0,
+            "corrections_applied": 0,
+            "warnings":           [],
+        }
+
+        # 1. Robot pose
+        pose_data = response.get("robot_pose")
+        if pose_data:
+            self.positions.move_to(
+                x      =float(pose_data.get("x",   0.0)),
+                y      =float(pose_data.get("y",   0.0)),
+                yaw    =float(pose_data.get("yaw", 0.0)),
+                action =pose_data.get("action"),
+            )
+            summary["robot_pose_updated"] = True
+
+        # 2. New objects
+        for entry in response.get("add_objects", []):
+            self.objects.add(MapObject(
+                id         =entry["id"],
+                description=entry.get("description", ""),
+                area       =entry.get("area"),
+            ))
+            summary["objects_added"] += 1
+
+        # 3. New coordinates
+        for entry in response.get("add_coordinates", []):
+            pos  = entry.get("position", {})
+            size = entry.get("size")
+            rot  = entry.get("rotation")
+            self.coordinates.add(ObjectCoordinate(
+                id      =entry["id"],
+                position=Vec3.from_dict(pos),
+                size    =Vec3.from_dict(size) if size else None,
+                rotation=Vec3.from_dict(rot)  if rot  else None,
+                area    =entry.get("area"),
+            ))
+            summary["coordinates_added"] += 1
+
+        # 4. New relations
+        for entry in response.get("add_relations", []):
+            self.relations.add(Relation(
+                object_a=entry["object_a"],
+                relation=entry["relation"],
+                object_b=entry["object_b"],
+                area    =entry.get("area"),
+            ))
+            summary["relations_added"] += 1
+
+        # 5. Corrections
+        for correction in response.get("corrections", []):
+            ctype = correction.get("type")
+
+            if ctype == "move_object":
+                obj_id = correction.get("id")
+                pos    = correction.get("position", {})
+                ok = self.coordinates.update(
+                    obj_id,
+                    position=Vec3.from_dict(pos),
+                )
+                if ok:
+                    summary["corrections_applied"] += 1
+                else:
+                    summary["warnings"].append(
+                        f"move_object: unknown id '{obj_id}'"
+                    )
+
+            elif ctype == "rotate_map":
+                delta = float(correction.get("delta_yaw", 0.0))
+                self.coordinates.rotate_all(delta)
+                summary["corrections_applied"] += 1
+
+            elif ctype == "set_robot_pose":
+                self.positions.set_pose(
+                    x     =float(correction.get("x",   0.0)),
+                    y     =float(correction.get("y",   0.0)),
+                    yaw   =float(correction.get("yaw", 0.0)),
+                    action="correction",
+                    record=True,
+                )
+                summary["corrections_applied"] += 1
+
+            else:
+                summary["warnings"].append(f"Unknown correction type: '{ctype}'")
+
+        return summary
+
+    # ------------------------------------------------------------------
+    # Primary interface 2: get current state
+    # ------------------------------------------------------------------
+
+    def get_state(
+        self,
+        camera_image:    Optional["Image.Image"] = None,
+        area:            Optional[str]  = None,
+        map_view_size_x: float = 5.0,
+        map_view_size_y: float = 5.0,
+        map_pixel_size:  int   = 512,
+        trace_last_n:    Optional[int]  = 50,
+        combined_width:  int   = 768,
+    ) -> dict:
+        """
+        Return the current spatial state for VLM input.
+
+        Args:
+            camera_image:    Current camera frame (PIL Image). If provided
+                             together with Pillow, a combined image is built.
+            area:            Optionally restrict objects/relations to one area.
+            map_view_size_x: Map viewport width in meters.
+            map_view_size_y: Map viewport height in meters.
+            map_pixel_size:  Map tile pixel size (square).
+            trace_last_n:    How many trace steps to render (None = all).
+            combined_width:  Width of the combined output image in pixels.
+
+        Returns dict with keys:
+            "robot"        — current pose
+            "objects"      — list of MapObject dicts
+            "coordinates"  — list of ObjectCoordinate dicts
+            "relations"    — list of Relation dicts
+            "combined_image" — PIL Image or None
+        """
+        pose = self.positions.pose
+
+        # State dicts
+        state = {
+            "robot": {"x": pose.x, "y": pose.y, "yaw": pose.yaw},
+            "objects":     [o.to_dict() for o in self.objects.get_all(area=area)],
+            "coordinates": [c.to_dict() for c in self.coordinates.get_all(area=area)],
+            "relations":   [r.to_dict() for r in self.relations.get_all(area=area)],
+            "combined_image": None,
+        }
+
+        # Combined image
+        if PIL_AVAILABLE:
+            trace_entries = self.positions.get_trace_points(last_n=trace_last_n)
+            trace_points  = [TracePoint(e.x, e.y, e.yaw) for e in trace_entries]
+
+            map_img = self.coordinates.get_map_image(
+                robot_x    =pose.x,
+                robot_y    =pose.y,
+                robot_yaw  =pose.yaw,
+                view_size_x=map_view_size_x,
+                view_size_y=map_view_size_y,
+                pixel_size =map_pixel_size,
+                trace      =trace_points,
+                area       =area,
+            )
+
+            combined = self._build_combined_image(
+                camera_image  =camera_image,
+                map_image     =map_img,
+                output_width  =combined_width,
+            )
+            state["combined_image"] = combined
+
+        return state
+
+    # ------------------------------------------------------------------
+    # Combined image builder
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_combined_image(
+        camera_image:  Optional["Image.Image"],
+        map_image:     "Image.Image",
+        output_width:  int = 768,
+    ) -> "Image.Image":
+        """
+        Stack camera (top) and map (bottom) into one image.
+        Both tiles are scaled to output_width; total height = 2 * tile_height.
+        If no camera image is provided, only the map is returned scaled.
+        """
+        from PIL import Image as PILImage
+
+        def scale_to_width(img: "Image.Image", w: int) -> "Image.Image":
+            ratio = w / img.width
+            new_h = int(img.height * ratio)
+            return img.resize((w, new_h), PILImage.LANCZOS)
+
+        map_scaled = scale_to_width(map_image, output_width)
+
+        if camera_image is None:
+            return map_scaled
+
+        cam_scaled  = scale_to_width(camera_image, output_width)
+        total_h     = cam_scaled.height + map_scaled.height
+        combined    = PILImage.new("RGB", (output_width, total_h), color=(20, 20, 20))
+        combined.paste(cam_scaled, (0, 0))
+        combined.paste(map_scaled, (0, cam_scaled.height))
+        return combined
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        return (
+            f"MapService("
+            f"objects={len(self.objects)}, "
+            f"coords={len(self.coordinates)}, "
+            f"relations={len(self.relations)}, "
+            f"trace={len(self.positions)})"
+        )
+
+
+# ----------------------------------------------------------------------
+# Quick demo
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    svc = MapService(data_dir=".")
+    svc.load_all()
+
+    # Simulate a VLM response
+    vlm_response = {
+        "robot_pose": {"x": 0.3, "y": 0.1, "yaw": 0.15, "action": "forward"},
+        "add_objects": [
+            {"id": "T1", "description": "großer Wohnzimmertisch", "area": "Wohnzimmer"},
+            {"id": "W1", "description": "Wand mit Eingangstür",   "area": "Wohnzimmer"},
+        ],
+        "add_coordinates": [
+            {"id": "T1", "position": {"x": 1.5, "y": 2.0},
+             "size": {"x": 1.2, "y": 0.8}, "area": "Wohnzimmer"},
+            {"id": "W1", "position": {"x": 0.0, "y": 4.0},
+             "size": {"x": 5.0, "y": 0.2}, "area": "Wohnzimmer"},
+        ],
+        "add_relations": [
+            {"object_a": "T1", "relation": "steht vor", "object_b": "W1",
+             "area": "Wohnzimmer"},
+        ],
+        "corrections": [],
+    }
+
+    summary = svc.process_vlm_response(vlm_response)
+    print("VLM response applied:", summary)
+
+    # Get state for next VLM call
+    state = svc.get_state(
+        camera_image   =None,
+        map_view_size_x=6.0,
+        map_view_size_y=6.0,
+        map_pixel_size =400,
+        trace_last_n   =50,
+    )
+
+    print(f"\nState — robot: {state['robot']}")
+    print(f"Objects:     {len(state['objects'])}")
+    print(f"Coordinates: {len(state['coordinates'])}")
+    print(f"Relations:   {len(state['relations'])}")
+
+    if state["combined_image"]:
+        state["combined_image"].save("combined_preview.png")
+        print("Combined image saved to combined_preview.png")
+
+    svc.save_all()
+    print(f"\nAll data saved. Service: {svc}")
