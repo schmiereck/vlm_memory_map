@@ -43,6 +43,7 @@ State JSON returned to VLM
 """
 
 import json
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -90,6 +91,27 @@ class MapService:
         self.positions.save()
 
     # ------------------------------------------------------------------
+    # Coordinate helpers
+    # ------------------------------------------------------------------
+
+    def _robot_relative_to_world(self, pos: dict) -> dict:
+        """
+        Transform a robot-relative position {x, y} to world coordinates
+        using the current robot pose.
+
+        Robot-relative: x = right, y = forward.
+        World: x = East, y = North, yaw = 0 means facing North.
+        """
+        rel_x = float(pos.get("x", 0.0))
+        rel_y = float(pos.get("y", 0.0))
+        pose  = self.positions.pose
+        cos_yaw = math.cos(pose.yaw)
+        sin_yaw = math.sin(pose.yaw)
+        world_x = pose.x + rel_x * cos_yaw - rel_y * sin_yaw
+        world_y = pose.y + rel_x * sin_yaw + rel_y * cos_yaw
+        return {"x": round(world_x, 3), "y": round(world_y, 3)}
+
+    # ------------------------------------------------------------------
     # Primary interface 1: process VLM response
     # ------------------------------------------------------------------
 
@@ -129,14 +151,15 @@ class MapService:
             ))
             summary["objects_added"] += 1
 
-        # 3. New coordinates
+        # 3. New coordinates (VLM gives robot-relative, transform to world)
         for entry in response.get("add_coordinates", []):
             pos  = entry.get("position", {})
             size = entry.get("size")
             rot  = entry.get("rotation")
+            world_pos = self._robot_relative_to_world(pos)
             self.coordinates.add(ObjectCoordinate(
                 id      =entry["id"],
-                position=Vec3.from_dict(pos),
+                position=Vec3.from_dict(world_pos),
                 size    =Vec3.from_dict(size) if size else None,
                 rotation=Vec3.from_dict(rot)  if rot  else None,
                 area    =entry.get("area"),
@@ -160,9 +183,10 @@ class MapService:
             if ctype == "move_object":
                 obj_id = correction.get("id")
                 pos    = correction.get("position", {})
+                world_pos = self._robot_relative_to_world(pos)
                 ok = self.coordinates.update(
                     obj_id,
-                    position=Vec3.from_dict(pos),
+                    position=Vec3.from_dict(world_pos),
                 )
                 if ok:
                     summary["corrections_applied"] += 1

@@ -184,13 +184,11 @@ class HexapodApp:
             confirm = self._robot.execute(action)
             self._log(confirm)
 
-            # Always use dead reckoning for robot pose.
-            # The VLM's robot_pose is unreliable (wrong coordinate convention),
-            # so we strip it and compute the pose ourselves.
+            # Strip VLM's unreliable robot_pose
             response.pop("robot_pose", None)
-            self._update_position_from_action(action)
 
-            # Update memory
+            # Update memory BEFORE dead reckoning — the VLM's robot-relative
+            # coordinates describe objects as seen from the current (pre-move) pose.
             summary = self._map.process_vlm_response(response)
             self._log(
                 f"── Memory update: "
@@ -202,6 +200,9 @@ class HexapodApp:
             if summary["warnings"]:
                 for w in summary["warnings"]:
                     self._log(f"   WARNING: {w}")
+
+            # Now apply dead reckoning to advance the robot pose
+            self._update_position_from_action(action)
 
             self._map.save_all()
 

@@ -36,25 +36,29 @@ COORDINATE SYSTEM:
   • Robot heading yaw = 0 means facing North (y+).
   • All object positions are WORLD coordinates, NOT relative to the robot.
 
-HOW TO ESTIMATE AN OBJECT'S WORLD POSITION:
-  Step A — Estimate the object's distance from the camera image:
-    fills > 50% width → ~0.3 m away
-    fills > 30% width → ~0.5 m away
-    fills > 15% width → ~1.0 m away
-    fills ~10% width  → ~1.5 m away
-    fills ~5%  width  → ~2.5 m away
-  Step B — Estimate the angle relative to forward:
-    Object in left 30% of image  → roughly -45° to the left of heading
-    Object in center 40%         → roughly straight ahead (0°)
-    Object in right 30%          → roughly +45° to the right of heading
-  Step C — Convert to world coordinates:
-    dx_robot = distance × sin(angle)
-    dy_robot = distance × cos(angle)
-    world_x  = robot_x + dx_robot × cos(yaw) - dy_robot × sin(yaw)
-    world_y  = robot_y + dx_robot × sin(yaw) + dy_robot × cos(yaw)
-  Example: robot at (0,0) yaw=0, object fills 10% width in LEFT zone:
-    distance ≈ 1.5 m, angle ≈ -45° → world ≈ (-1.1, 1.1)
-    NOT (-0.5, 0) — objects are always in FRONT of the robot, not beside it.
+OBJECT COORDINATES — ROBOT-RELATIVE
+Positions in add_coordinates are RELATIVE TO THE ROBOT, not world coordinates.
+The application converts them to world coordinates automatically.
+
+  x = metres to the robot's RIGHT  (negative = left)
+  y = metres FORWARD from the robot (negative = behind)
+
+Objects visible in the camera are ALWAYS in front → y MUST be positive.
+
+Distance guide (estimate from how much image width an object fills):
+  fills > 50%  → ~0.3 m     fills ~30% → ~0.5 m
+  fills ~15%   → ~1.0 m     fills ~10% → ~1.5 m
+  fills ~5%    → ~2.5 m
+
+Lateral guide (estimate x from horizontal position in the image):
+  Left edge of image  → x ≈ -distance × 0.7
+  25% from left       → x ≈ -distance × 0.3
+  Centre of image     → x ≈ 0
+  75% from left       → x ≈ +distance × 0.3
+  Right edge of image → x ≈ +distance × 0.7
+
+IMPORTANT: estimate distance and x/y ONLY from the current camera image.
+Do NOT adjust estimates based on history or previous actions.
 
 Plus a JSON block:
   robot       — current pose (x, y, yaw in metres / radians)
@@ -70,8 +74,9 @@ YOUR PRIMARY JOB: SCAN AND MAP
 Every single step, regardless of what else you do:
 
 Describe what you see in the camera — left edge, center, right edge.
-For every landmark not yet in the objects list, add it to add_objects
-and add_coordinates. Landmarks worth logging:
+For EVERY visible landmark not yet in the objects list, add it to BOTH
+add_objects AND add_coordinates. This is mandatory — not optional.
+Landmarks worth logging:
   • Furniture: tables, chairs, sofas, shelves, cabinets
   • Room structure: walls, doors, windows, stairs
   • Any large or distinctive object that could help navigation later
@@ -155,14 +160,16 @@ No text before or after. No markdown. No backticks.
 }
 
 ────────────────────────────────────────────────────────────
-EXAMPLES
+EXAMPLES  (coordinates are robot-relative: x=right, y=forward)
 ────────────────────────────────────────────────────────────
 
 Situation: Hint = "find the magnetic play structure and drive close to it".
 Camera: play structure barely visible at left edge (~10% width); dining table
-and two chairs visible right/center. Robot at (0,0) yaw=0.
-Coordinate calculation: Ob1 left-zone, 1.5 m → angle ≈ -45° → x ≈ -1.1, y ≈ 1.1
-                        T1  right-zone, 1.5 m → angle ≈ +45° → x ≈ +1.1, y ≈ 1.1
+and two chairs visible right/center.
+Coordinate estimation:
+  Ob1: left edge, ~10% width → dist ≈ 1.5 m, x ≈ -1.5×0.7 = -1.1, y ≈ 1.1
+  T1:  right-center, ~10% width → dist ≈ 1.5 m, x ≈ +1.5×0.3 = +0.5, y ≈ 1.5
+  C1/C2: right zone, ~15% → dist ≈ 1.0 m, x ≈ +0.7 / +1.0, y ≈ 0.7
 
 {
   "action": {
@@ -174,28 +181,33 @@ Coordinate calculation: Ob1 left-zone, 1.5 m → angle ≈ -45° → x ≈ -1.1,
   "add_objects": [
     {"id": "Ob1", "description": "magnetic play structure, colored rods and metal balls", "area": "living room"},
     {"id": "T1",  "description": "wooden dining table", "area": "living room"},
-    {"id": "C1",  "description": "wooden chair", "area": "living room"},
-    {"id": "C2",  "description": "wooden chair", "area": "living room"}
+    {"id": "C1",  "description": "wooden chair left of table", "area": "living room"},
+    {"id": "C2",  "description": "wooden chair right of table", "area": "living room"}
   ],
   "add_coordinates": [
     {"id": "Ob1", "position": {"x": -1.1, "y": 1.1}, "size": {"x": 0.4, "y": 0.4}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "T1",  "position": {"x":  1.1, "y": 1.1}, "size": {"x": 1.2, "y": 0.8}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "C1",  "position": {"x":  0.7, "y": 1.0}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "C2",  "position": {"x":  1.4, "y": 1.0}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"}
+    {"id": "T1",  "position": {"x":  0.5, "y": 1.5}, "size": {"x": 1.2, "y": 0.8}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
+    {"id": "C1",  "position": {"x":  0.7, "y": 0.7}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
+    {"id": "C2",  "position": {"x":  1.0, "y": 0.7}, "size": {"x": 0.5, "y": 0.5}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"}
   ]
 }
 
 ---
 
-Situation: Same hint. Goal now centered, ~40% width (close). Path clear.
+Situation: Same hint. Goal now centered, ~40% width (close). Chair visible right.
 
 {
   "action": {
     "type": "forward",
     "distance_m": 0.2,
     "angle_deg": 0.0,
-    "reason": "Left: empty. Center: magnetic play structure (Ob1) centered ~40% width, est. 50 cm — goal is centered and reachable, hint says drive close. Right: empty. No obstacle. Moving forward."
-  }
+    "reason": "Left: empty. Center: magnetic play structure (Ob1) centered ~40% width, est. 50 cm — goal is centered and reachable, hint says drive close. Right: chair C1 ~1 m. No obstacle. Moving forward."
+  },
+  "add_objects": [],
+  "add_coordinates": [],
+  "corrections": [
+    {"type": "move_object", "id": "Ob1", "position": {"x": 0.0, "y": 0.5}}
+  ]
 }
 
 ---
@@ -207,15 +219,15 @@ Situation: No hint goal. Exploring. Shelf visible left, door visible right.
     "type": "forward",
     "distance_m": 0.3,
     "angle_deg": 0.0,
-    "reason": "Left: wooden shelf ~1.5 m. Center: open floor. Right: door to hallway ~2 m. No goal. No obstacle. Moving forward to explore. Logging landmarks."
+    "reason": "Left: wooden shelf ~15% width, est. 1.0 m. Center: open floor. Right: door to hallway ~5% width, est. 2.5 m. No goal. No obstacle. Moving forward to explore. Logging landmarks."
   },
   "add_objects": [
     {"id": "Sh1", "description": "wooden shelf", "area": "living room"},
     {"id": "D1",  "description": "door to hallway", "area": "living room"}
   ],
   "add_coordinates": [
-    {"id": "Sh1", "position": {"x": -1.2, "y": 0.5}, "size": {"x": 0.4, "y": 1.0}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
-    {"id": "D1",  "position": {"x":  1.8, "y": 0.8}, "size": {"x": 0.9, "y": 0.1}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"}
+    {"id": "Sh1", "position": {"x": -0.7, "y": 1.0}, "size": {"x": 0.4, "y": 1.0}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"},
+    {"id": "D1",  "position": {"x":  1.8, "y": 2.5}, "size": {"x": 0.9, "y": 0.1}, "rotation": {"x": null, "y": null, "z": null}, "area": "living room"}
   ]
 }
 """
