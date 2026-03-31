@@ -60,13 +60,17 @@ class AI2ThorBridge:
 
     def __init__(
         self,
-        scene:                str            = "FloorPlan1",
-        image_size:           int            = 640,
-        local_executable_path: Optional[str] = None,
+        scene:                 str            = "FloorPlan1",
+        image_size:            int            = 640,
+        local_executable_path: Optional[str]  = None,
+        start_back_m:          float          = 0.0,
+        start_rotate_left_deg: float          = 0.0,
     ):
-        self._scene                 = scene
-        self._image_size            = image_size
-        self._local_executable_path = local_executable_path
+        self._scene                  = scene
+        self._image_size             = image_size
+        self._local_executable_path  = local_executable_path
+        self._start_back_m           = start_back_m
+        self._start_rotate_left_deg  = start_rotate_left_deg
         self._ctrl:       Optional["Controller"] = None
         self._start_pos:  Optional[dict]         = None
         self._start_rot_y: float                 = 0.0
@@ -94,6 +98,26 @@ class AI2ThorBridge:
                 print(f"[AI2-THOR] Using local binary: {self._local_executable_path}")
             self._ctrl = Controller(**kwargs)
             agent = self._ctrl.last_event.metadata["agent"]
+            pos   = agent["position"]
+            rot_y = agent["rotation"]["y"]
+
+            # Apply start offset: move back and/or rotate left
+            if self._start_back_m != 0.0 or self._start_rotate_left_deg != 0.0:
+                rot_rad = math.radians(rot_y)
+                new_x   = pos["x"] - self._start_back_m * math.sin(rot_rad)
+                new_z   = pos["z"] - self._start_back_m * math.cos(rot_rad)
+                new_rot = rot_y - self._start_rotate_left_deg  # CW → left = subtract
+                event   = self._ctrl.step(
+                    "TeleportFull",
+                    x=new_x, y=pos["y"], z=new_z,
+                    rotation={"x": 0, "y": new_rot, "z": 0},
+                    horizon=0,
+                    standing=True,
+                )
+                if not event.metadata.get("lastActionSuccess", False):
+                    print("[AI2-THOR] WARNING: Start teleport blocked — using default spawn.")
+                agent = self._ctrl.last_event.metadata["agent"]
+
             self._start_pos   = dict(agent["position"])
             self._start_rot_y = agent["rotation"]["y"]
             print(f"[AI2-THOR] Ready. Start pos: "
@@ -156,23 +180,38 @@ class AI2ThorBridge:
         Return current agent pose in our world coordinate frame:
             x   — East offset from start position (metres)
             y   — North offset from start position (metres)
-            yaw — counter-clockwise from North (radians)
+            yaw — counter-clockwise from initial heading (radians)
 
-        Coordinate mapping:
-            our_x   = thor.position.x − start.x
-            our_y   = thor.position.z − start.z
-            our_yaw = −radians(thor.rotation.y)
-                      (AI2-THOR yaw is clockwise degrees)
+        Our coordinate system defines:
+            origin  = teleported start position
+            North   = initial facing direction of the agent
+            yaw = 0 = facing North, positive = CCW (left)
+
+        AI2-THOR uses clockwise degrees and absolute world coordinates,
+        so we rotate the displacement vector by the initial heading and
+        compute yaw relative to start_rot_y.
+
+        Forward direction in AI2-THOR at angle θ: (sin θ, cos θ) in (x, z).
+        Rotation to our frame:
+            our_x = dx·cos θ − dz·sin θ   (East)
+            our_y = dx·sin θ + dz·cos θ   (North / forward)
+            yaw   = −radians(rot_y − start_rot_y)
         """
         if self._ctrl is None or self._start_pos is None:
             return (0.0, 0.0, 0.0)
-        agent = self._ctrl.last_event.metadata["agent"]
-        pos   = agent["position"]
-        rot_y = agent["rotation"]["y"]
-        x   = pos["x"] - self._start_pos["x"]
-        y   = pos["z"] - self._start_pos["z"]
-        yaw = -math.radians(rot_y)
-        return (x, y, yaw)
+        agent    = self._ctrl.last_event.metadata["agent"]
+        pos      = agent["position"]
+        rot_y    = agent["rotation"]["y"]
+
+        dx       = pos["x"] - self._start_pos["x"]
+        dz       = pos["z"] - self._start_pos["z"]
+        init_rad = math.radians(self._start_rot_y)
+
+        our_x = dx * math.cos(init_rad) - dz * math.sin(init_rad)
+        our_y = dx * math.sin(init_rad) + dz * math.cos(init_rad)
+        yaw   = -math.radians(rot_y - self._start_rot_y)
+
+        return (our_x, our_y, yaw)
 
 
 # ----------------------------------------------------------------------

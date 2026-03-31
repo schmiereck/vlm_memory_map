@@ -48,7 +48,11 @@ class HexapodGui:
 
         self._build_ui()
         self._register_callbacks()
-        self._root.state("zoomed")   # open maximised
+        # Maximise — Windows uses state("zoomed"), Linux uses the -zoomed attribute
+        if self._root.tk.call("tk", "windowingsystem") == "win32":
+            self._root.state("zoomed")
+        else:
+            self._root.attributes("-zoomed", True)
 
     # ------------------------------------------------------------------
     # UI construction

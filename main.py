@@ -93,6 +93,12 @@ class HexapodApp:
         ok = self._camera.open()
         if ok:
             self._running = True
+            # Sync starting pose from simulator so yaw=0 = initial heading
+            pose_tuple = self._robot.get_pose()
+            if pose_tuple is not None:
+                x, y, yaw = pose_tuple
+                self._map.positions.move_to(x, y, yaw, action="stop")
+                self._map.positions.save()
             self._log("System ready. Press 'Next Step' to start.")
         else:
             self._log("ERROR: Could not open camera.")
@@ -345,6 +351,12 @@ def main():
     parser.add_argument("--thor-path", type=str, default=None,
                         dest="thor_path",
                         help="Path to local AI2-THOR executable (workaround for Windows build issues)")
+    parser.add_argument("--thor-back", type=float, default=0.0,
+                        dest="thor_back",
+                        help="Move start position back by N metres (default: 0)")
+    parser.add_argument("--thor-rotate", type=float, default=0.0,
+                        dest="thor_rotate",
+                        help="Rotate start position left by N degrees (default: 0)")
     parser.add_argument("--data",  type=str, default=DATA_DIR,
                         help=f"Data directory (default: {DATA_DIR})")
     args = parser.parse_args()
@@ -352,7 +364,12 @@ def main():
     # Select camera + robot backend
     if args.thor:
         from ai2thor_client import AI2ThorBridge, AI2ThorCameraClient, AI2ThorRobotClient
-        bridge = AI2ThorBridge(scene=args.scene, local_executable_path=args.thor_path)
+        bridge = AI2ThorBridge(
+            scene=args.scene,
+            local_executable_path=args.thor_path,
+            start_back_m=args.thor_back,
+            start_rotate_left_deg=args.thor_rotate,
+        )
         camera = AI2ThorCameraClient(bridge)
         robot  = AI2ThorRobotClient(bridge)
     elif args.image:
