@@ -19,6 +19,8 @@ python main.py --gui --image test4.jpg
 
 Suche die Magnetspiel-Struktur aus farbigen Stäben und Metall-Kugeln und fahre bis dicht vor sie hin.
 
+Locate the Magnetic-Toy structure build of colored rods and metal balls and drive until you are very close to it.
+
 # Nur Terminal:
 ```
 python main.py
