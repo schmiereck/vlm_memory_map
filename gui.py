@@ -246,7 +246,18 @@ class HexapodGui:
             self._log("ERROR: Could not start app. Check camera and API key.")
         self._refresh_hints()
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Show map (+ static test image if given) immediately on startup
+        self._root.after(100, self._show_initial_image)
         self._root.mainloop()
+
+    def _show_initial_image(self) -> None:
+        if not PIL_AVAILABLE:
+            return
+        img = self._app.get_initial_image()
+        if img is not None:
+            self._show_image(img)
+            obj_count = len(self._app._map.objects)
+            self._set_status(f"Objects: {obj_count}  (map loaded from disk)")
 
     def _on_close(self) -> None:
         self._app.shutdown()

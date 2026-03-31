@@ -44,6 +44,7 @@ from vlm_client         import VlmClient
 from robot_client       import RobotClient, ConsoleRobotClient
 from camera_client      import CameraClient, LaptopCameraClient, StaticImageClient
 
+
 DATA_DIR = "data"
 
 
@@ -96,6 +97,23 @@ class HexapodApp:
         else:
             self._log("ERROR: Could not open camera.")
         return ok
+
+    def get_initial_image(self) -> Optional["Image.Image"]:
+        """
+        Return an initial display image on startup.
+        - If a static test image is configured, return combined (camera + map).
+        - Otherwise return only the map (camera area blank).
+        """
+        camera_image = None
+        if isinstance(self._camera, StaticImageClient):
+            camera_image = self._camera.capture()
+
+        state = self._map.get_state(
+            camera_image   =camera_image,
+            map_pixel_size =512,
+            combined_width =768,
+        )
+        return state.get("combined_image")
 
     def trigger_step(self) -> None:
         """
