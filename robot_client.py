@@ -38,6 +38,15 @@ class RobotClient(ABC):
             A human-readable confirmation string for display in the GUI log.
         """
 
+    def get_pose(self) -> "Optional[tuple[float, float, float]]":
+        """
+        Optional: return current (x, y, yaw) in world coordinates.
+        x/y in metres from start, yaw in CCW radians from North.
+        Returns None to signal that dead reckoning should be used instead.
+        Simulator-backed clients (e.g. AI2ThorRobotClient) override this.
+        """
+        return None
+
     def shutdown(self) -> None:
         """Optional cleanup hook called when the application exits."""
 

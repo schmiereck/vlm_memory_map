@@ -11,3 +11,7 @@ Pillow>=10.0.0
 opencv-python>=4.8.0
 
 # tkinter is built into Python — no install needed
+
+# AI2-THOR virtual environment (optional, only needed with --thor)
+# 4.3.0 is the last version with reliable Windows pre-built binaries
+# ai2thor==4.3.0

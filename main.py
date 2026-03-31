@@ -235,17 +235,29 @@ class HexapodApp:
 
     def _update_position_from_action(self, action: dict) -> None:
         """
-        Derive the new robot pose from the action command.
-        Called when the VLM omits robot_pose in its response.
-        Uses dead reckoning: integrates distance/angle onto the current pose.
+        Update robot pose after executing an action.
+
+        Prefers ground-truth pose from the robot client (e.g. AI2-THOR simulator).
+        Falls back to dead reckoning when no ground-truth is available.
         """
         import math
-        pose        = self._map.positions.pose
         action_type = action.get("type", "stop")
-        distance_m  = action.get("distance_m", 0.0)
-        angle_deg   = action.get("angle_deg",  0.0)
-        angle_rad   = math.radians(angle_deg)
 
+        # --- Ground-truth pose (simulator) --------------------------------
+        pose_tuple = self._robot.get_pose()
+        if pose_tuple is not None:
+            x, y, yaw = pose_tuple
+            self._map.positions.move_to(x, y, yaw, action=action_type)
+            self._log(
+                f"Pose (ground truth): x={x:.2f} y={y:.2f} "
+                f"yaw={math.degrees(yaw):.1f}deg"
+            )
+            return
+
+        # --- Dead reckoning fallback --------------------------------------
+        pose       = self._map.positions.pose
+        distance_m = action.get("distance_m", 0.0)
+        angle_rad  = math.radians(action.get("angle_deg", 0.0))
         x   = pose.x
         y   = pose.y
         yaw = pose.yaw
@@ -260,10 +272,13 @@ class HexapodApp:
             yaw += angle_rad
         elif action_type == "turn_right":
             yaw -= angle_rad
-        # stop -> no change
+        # stop → no change
 
         self._map.positions.move_to(x, y, yaw, action=action_type)
-        self._log(f"Pose (dead reckoning): x={x:.2f} y={y:.2f} yaw={math.degrees(yaw):.1f}deg")
+        self._log(
+            f"Pose (dead reckoning): x={x:.2f} y={y:.2f} "
+            f"yaw={math.degrees(yaw):.1f}deg"
+        )
 
     def _save_request_log(self, turn: list[dict], raw_response: str, parsed_response: dict) -> None:
         """
@@ -323,18 +338,29 @@ def main():
     parser.add_argument("--gui",   action="store_true", help="Launch with GUI")
     parser.add_argument("--image", type=str, default=None,
                         help="Use static image instead of webcam (for testing)")
+    parser.add_argument("--thor",  action="store_true",
+                        help="Use AI2-THOR virtual environment instead of webcam")
+    parser.add_argument("--scene", type=str, default="FloorPlan1",
+                        help="AI2-THOR scene name (default: FloorPlan1)")
+    parser.add_argument("--thor-path", type=str, default=None,
+                        dest="thor_path",
+                        help="Path to local AI2-THOR executable (workaround for Windows build issues)")
     parser.add_argument("--data",  type=str, default=DATA_DIR,
                         help=f"Data directory (default: {DATA_DIR})")
     args = parser.parse_args()
 
-    # Select camera
-    if args.image:
+    # Select camera + robot backend
+    if args.thor:
+        from ai2thor_client import AI2ThorBridge, AI2ThorCameraClient, AI2ThorRobotClient
+        bridge = AI2ThorBridge(scene=args.scene, local_executable_path=args.thor_path)
+        camera = AI2ThorCameraClient(bridge)
+        robot  = AI2ThorRobotClient(bridge)
+    elif args.image:
         camera = StaticImageClient(args.image)
+        robot  = ConsoleRobotClient()
     else:
         camera = LaptopCameraClient(device_index=0)
-
-    # Robot is always console in laptop mode
-    robot = ConsoleRobotClient()
+        robot  = ConsoleRobotClient()
 
     app = HexapodApp(robot=robot, camera=camera, data_dir=args.data)
 
