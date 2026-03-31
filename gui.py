@@ -4,16 +4,16 @@ gui.py
 Tkinter GUI for the hexapod spatial memory system.
 
 Layout:
-┌─────────────────────────────────────────────────────┐
-│  [Combined Image — camera top, map bottom]           │
-├──────────────────────┬──────────────────────────────┤
-│  Log                 │  Hints                        │
-│  (scrollable)        │  [permanent] [session]        │
-│                      │  [one_time]                   │
-│                      │  Text entry + Add button      │
-├──────────────────────┴──────────────────────────────┤
-│  [ Next Step ]                    Status label       │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────┬──────────────────────┐
+│  Combined Image               │  Objects             │
+│  (camera top, map bottom)     │  ID | Description    │
+│                               │  Color               │
+├──────────────┬────────────────┤  (scrollable list)   │
+│  Log         │  Hints         │                      │
+│  (scrollable)│  entry + list  │                      │
+├──────────────┴────────────────┴──────────────────────┤
+│  [ Next Step ]                         Status label   │
+└───────────────────────────────────────────────────────┘
 
 Requires: tkinter (built-in), Pillow
 """
@@ -48,6 +48,7 @@ class HexapodGui:
 
         self._build_ui()
         self._register_callbacks()
+        self._root.state("zoomed")   # open maximised
 
     # ------------------------------------------------------------------
     # UI construction
@@ -55,14 +56,15 @@ class HexapodGui:
 
     def _build_ui(self) -> None:
         root = self._root
-        root.columnconfigure(0, weight=1)
+        root.columnconfigure(0, weight=3)   # left: image + log/hints
+        root.columnconfigure(1, weight=1)   # right: objects list
         root.rowconfigure(0, weight=3)
         root.rowconfigure(1, weight=2)
         root.rowconfigure(2, weight=0)
 
-        # ── Row 0: combined image ───────────────────────────────────────
+        # ── Col 0 / Row 0: combined image ──────────────────────────────
         img_frame = ttk.Frame(root, relief="sunken", borderwidth=1)
-        img_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=(6, 2))
+        img_frame.grid(row=0, column=0, sticky="nsew", padx=(6, 2), pady=(6, 2))
 
         self._canvas = tk.Canvas(
             img_frame,
@@ -78,9 +80,34 @@ class HexapodGui:
             font=("Helvetica", 14),
         )
 
-        # ── Row 1: log + hints ─────────────────────────────────────────
+        # ── Col 1 / Row 0+1: objects list ──────────────────────────────
+        obj_frame = ttk.LabelFrame(root, text="Objects")
+        obj_frame.grid(row=0, column=1, rowspan=2, sticky="nsew",
+                       padx=(2, 6), pady=(6, 2))
+        obj_frame.rowconfigure(0, weight=1)
+        obj_frame.columnconfigure(0, weight=1)
+
+        cols = ("id", "description", "color")
+        self._obj_tree = ttk.Treeview(
+            obj_frame, columns=cols, show="headings",
+            selectmode="none",
+        )
+        self._obj_tree.heading("id",          text="ID")
+        self._obj_tree.heading("description", text="Description")
+        self._obj_tree.heading("color",       text="Color")
+        self._obj_tree.column("id",          width=50,  stretch=False, anchor="w")
+        self._obj_tree.column("description", width=180, stretch=True,  anchor="w")
+        self._obj_tree.column("color",       width=90,  stretch=False, anchor="w")
+
+        obj_scroll = ttk.Scrollbar(obj_frame, orient="vertical",
+                                   command=self._obj_tree.yview)
+        self._obj_tree.configure(yscrollcommand=obj_scroll.set)
+        self._obj_tree.grid(row=0, column=0, sticky="nsew")
+        obj_scroll.grid(row=0, column=1, sticky="ns")
+
+        # ── Col 0 / Row 1: log + hints ─────────────────────────────────
         mid_frame = ttk.Frame(root)
-        mid_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=2)
+        mid_frame.grid(row=1, column=0, sticky="nsew", padx=(6, 2), pady=2)
         mid_frame.columnconfigure(0, weight=2)
         mid_frame.columnconfigure(1, weight=1)
         mid_frame.rowconfigure(0, weight=1)
@@ -130,9 +157,10 @@ class HexapodGui:
         ttk.Button(hint_frame, text="Delete selected",
                    command=self._on_delete_hint).pack(padx=4, pady=(0, 4))
 
-        # ── Row 2: controls ────────────────────────────────────────────
+        # ── Row 2 / both cols: controls ────────────────────────────────
         ctrl_frame = ttk.Frame(root)
-        ctrl_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
+        ctrl_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
+                        padx=6, pady=(2, 6))
         ctrl_frame.columnconfigure(1, weight=1)
 
         self._step_btn = ttk.Button(
@@ -197,6 +225,7 @@ class HexapodGui:
         if combined_image is not None and PIL_AVAILABLE:
             self._show_image(combined_image)
         self._refresh_hints()
+        self._refresh_objects()
         self._set_status(
             f"Objects: {len(self._app._map.objects)}  "
             f"Trace: {len(self._app._map.positions)}"
@@ -234,6 +263,23 @@ class HexapodGui:
             for text in items:
                 self._hint_list.insert("end", f"[{cat}] {text}")
 
+    def _refresh_objects(self) -> None:
+        """Repopulate the objects treeview from current map state."""
+        self._obj_tree.delete(*self._obj_tree.get_children())
+        from object_manager import OBJECT_COLORS
+        for obj in self._app._map.objects.get_all():
+            color_name = obj.color or ""
+            rgb = OBJECT_COLORS.get(color_name)
+            tag = f"col_{color_name}"
+            if rgb:
+                hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
+                self._obj_tree.tag_configure(tag, foreground=hex_color)
+            self._obj_tree.insert(
+                "", "end",
+                values=(obj.id, obj.description, color_name),
+                tags=(tag,),
+            )
+
     def _set_status(self, text: str) -> None:
         self._status_var.set(text)
 
@@ -256,8 +302,9 @@ class HexapodGui:
         img = self._app.get_initial_image()
         if img is not None:
             self._show_image(img)
-            obj_count = len(self._app._map.objects)
-            self._set_status(f"Objects: {obj_count}  (map loaded from disk)")
+        self._refresh_objects()
+        obj_count = len(self._app._map.objects)
+        self._set_status(f"Objects: {obj_count}  (map loaded from disk)")
 
     def _on_close(self) -> None:
         self._app.shutdown()
