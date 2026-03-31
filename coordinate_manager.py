@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -234,7 +234,15 @@ class CoordinateManager:
                 r = 6
                 draw.ellipse([px-r, py-r, px+r, py+r],
                              fill=(60, 120, 200), outline=(20, 60, 140))
-            draw.text((px + 8, py - 10), obj.id, fill=(20, 20, 120))
+            # Centered label
+            try:
+                label_font = ImageFont.truetype("arial.ttf", 16)
+            except (OSError, IOError):
+                label_font = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), obj.id, font=label_font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text((px - tw // 2, py - th // 2), obj.id,
+                      fill=(20, 20, 120), font=label_font)
 
         # View cone (camera field of view, ~60 deg half-angle, ~2 m range)
         rpx, rpy = world_to_pixel(robot_x, robot_y)
