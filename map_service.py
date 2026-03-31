@@ -53,7 +53,7 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
-from object_manager     import ObjectManager,     MapObject
+from object_manager     import ObjectManager,     MapObject, OBJECT_COLORS
 from relation_manager   import RelationManager,   Relation
 from coordinate_manager import CoordinateManager, ObjectCoordinate, Vec3, TracePoint
 from position_manager   import PositionManager
@@ -265,15 +265,21 @@ class MapService:
             trace_entries = self.positions.get_trace_points(last_n=trace_last_n)
             trace_points  = [TracePoint(e.x, e.y, e.yaw) for e in trace_entries]
 
+            object_colors = {
+                obj.id: OBJECT_COLORS[obj.color]
+                for obj in self.objects.get_all(area=area)
+                if obj.color and obj.color in OBJECT_COLORS
+            }
             map_img = self.coordinates.get_map_image(
-                robot_x    =pose.x,
-                robot_y    =pose.y,
-                robot_yaw  =pose.yaw,
-                view_size_x=map_view_size_x,
-                view_size_y=map_view_size_y,
-                pixel_size =map_pixel_size,
-                trace      =trace_points,
-                area       =area,
+                robot_x      =pose.x,
+                robot_y      =pose.y,
+                robot_yaw    =pose.yaw,
+                view_size_x  =map_view_size_x,
+                view_size_y  =map_view_size_y,
+                pixel_size   =map_pixel_size,
+                trace        =trace_points,
+                area         =area,
+                object_colors=object_colors,
             )
 
             combined = self._build_combined_image(

@@ -168,14 +168,15 @@ class CoordinateManager:
 
     def get_map_image(
         self,
-        robot_x:     float = 0.0,
-        robot_y:     float = 0.0,
-        robot_yaw:   float = 0.0,
-        view_size_x: float = 5.0,
-        view_size_y: float = 5.0,
-        pixel_size:  int   = 600,
-        trace:       Optional[list[TracePoint]] = None,
-        area:        Optional[str] = None,
+        robot_x:       float = 0.0,
+        robot_y:       float = 0.0,
+        robot_yaw:     float = 0.0,
+        view_size_x:   float = 5.0,
+        view_size_y:   float = 5.0,
+        pixel_size:    int   = 600,
+        trace:         Optional[list[TracePoint]] = None,
+        area:          Optional[str] = None,
+        object_colors: Optional[dict[str, tuple[int, int, int]]] = None,
     ) -> "Image.Image":
         """
         Render a top-down map image. Robot is always centered, pointing up.
@@ -186,8 +187,9 @@ class CoordinateManager:
             view_size_x:  Visible width in world meters.
             view_size_y:  Visible height in world meters.
             pixel_size:   Output image size in pixels (square).
-            trace:        Optional movement trace to draw.
-            area:         If given, render only objects in that area.
+            trace:         Optional movement trace to draw.
+            area:          If given, render only objects in that area.
+            object_colors: Mapping of object ID → RGB tuple for per-object coloring.
         """
         if not PIL_AVAILABLE:
             raise RuntimeError("Pillow not installed — run: pip install Pillow")
@@ -209,9 +211,51 @@ class CoordinateManager:
         img  = Image.new("RGB", (pixel_size, pixel_size), color=(240, 240, 240))
         draw = ImageDraw.Draw(img)
 
+        # 1. Grid
         self._draw_grid(draw, robot_x, robot_y, view_size_x, view_size_y, world_to_pixel)
 
-        # Trace
+        # 2. View cone
+        rpx, rpy = world_to_pixel(robot_x, robot_y)
+        self._draw_view_cone(img, rpx, rpy, pixel_size, scale_x)
+        draw = ImageDraw.Draw(img)  # refresh draw handle after alpha_composite in cone
+
+        # Font — load once outside the loop
+        try:
+            label_font = ImageFont.truetype("arial.ttf", 16)
+        except (OSError, IOError):
+            label_font = ImageFont.load_default()
+
+        # 3. Objects
+        visible = self.get_all(area=area)
+        for obj in visible:
+            px, py = world_to_pixel(obj.position.x, obj.position.y or 0.0)
+            yaw = obj.rotation.z if (obj.rotation and obj.rotation.z is not None) else 0.0
+            rot = yaw - robot_yaw
+
+            # Resolve color from object_colors dict; fall back to default blue
+            base_rgb: tuple[int, int, int] = (
+                (object_colors or {}).get(obj.id) or (60, 120, 200)
+            )
+            fill_rgb    = tuple(int(c * 0.45 + 255 * 0.55) for c in base_rgb)
+            outline_rgb = tuple(int(c * 0.65)               for c in base_rgb)
+            label_rgb   = tuple(int(c * 0.45)               for c in base_rgb)
+
+            if obj.size and obj.size.x is not None:
+                sx = int(obj.size.x * scale_x)
+                sy = int((obj.size.y if obj.size.y is not None else obj.size.x) * scale_y)
+                self._draw_rotated_rect(draw, px, py, sx, sy, rot,
+                                        outline=outline_rgb, fill=fill_rgb)
+            else:
+                r = 6
+                draw.ellipse([px-r, py-r, px+r, py+r],
+                             fill=base_rgb, outline=outline_rgb)
+            # Centered label
+            bbox = draw.textbbox((0, 0), obj.id, font=label_font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text((px - tw // 2, py - th // 2), obj.id,
+                      fill=label_rgb, font=label_font)
+
+        # 4. Trace
         if trace and len(trace) > 1:
             pts = [world_to_pixel(tp.x, tp.y) for tp in trace]
             draw.line(pts, fill=(180, 100, 100), width=2)
@@ -219,37 +263,7 @@ class CoordinateManager:
                 r = 3
                 draw.ellipse([pt[0]-r, pt[1]-r, pt[0]+r, pt[1]+r], fill=(160, 80, 80))
 
-        # Objects
-        visible = self.get_all(area=area)
-        for obj in visible:
-            px, py = world_to_pixel(obj.position.x, obj.position.y or 0.0)
-            yaw = obj.rotation.z if (obj.rotation and obj.rotation.z is not None) else 0.0
-            rot = yaw - robot_yaw
-            if obj.size and obj.size.x is not None:
-                sx = int(obj.size.x * scale_x)
-                sy = int((obj.size.y if obj.size.y is not None else obj.size.x) * scale_y)
-                self._draw_rotated_rect(draw, px, py, sx, sy, rot,
-                                        outline=(60, 120, 200), fill=(180, 210, 255))
-            else:
-                r = 6
-                draw.ellipse([px-r, py-r, px+r, py+r],
-                             fill=(60, 120, 200), outline=(20, 60, 140))
-            # Centered label
-            try:
-                label_font = ImageFont.truetype("arial.ttf", 16)
-            except (OSError, IOError):
-                label_font = ImageFont.load_default()
-            bbox = draw.textbbox((0, 0), obj.id, font=label_font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((px - tw // 2, py - th // 2), obj.id,
-                      fill=(20, 20, 120), font=label_font)
-
-        # View cone (camera field of view, ~60 deg half-angle, ~2 m range)
-        rpx, rpy = world_to_pixel(robot_x, robot_y)
-        self._draw_view_cone(img, rpx, rpy, pixel_size, scale_x)
-
-        # Robot (drawn on top of cone)
-        draw = ImageDraw.Draw(img)  # refresh draw handle after paste
+        # 5. Robot (always on top)
         self._draw_robot(draw, rpx, rpy, pixel_size)
 
         return img
