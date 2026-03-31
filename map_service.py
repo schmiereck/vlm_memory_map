@@ -155,13 +155,19 @@ class MapService:
         for entry in response.get("add_coordinates", []):
             pos  = entry.get("position", {})
             size = entry.get("size")
-            rot  = entry.get("rotation")
+            rot  = entry.get("rotation") or {}
             world_pos = self._robot_relative_to_world(pos)
+            # size.x/y are in robot frame (x=right, y=forward).
+            # Store world rotation = robot_yaw + VLM relative rotation so that
+            # the renderer can correctly orient the rectangle regardless of
+            # which direction the robot was facing when it observed the object.
+            rel_rot_z   = rot.get("z")
+            world_rot_z = self.positions.pose.yaw + (rel_rot_z if rel_rot_z is not None else 0.0)
             self.coordinates.add(ObjectCoordinate(
                 id      =entry["id"],
                 position=Vec3.from_dict(world_pos),
                 size    =Vec3.from_dict(size) if size else None,
-                rotation=Vec3.from_dict(rot)  if rot  else None,
+                rotation=Vec3(x=None, y=None, z=round(world_rot_z, 4)),
                 area    =entry.get("area"),
             ))
             summary["coordinates_added"] += 1
@@ -181,12 +187,18 @@ class MapService:
             ctype = correction.get("type")
 
             if ctype == "move_object":
-                obj_id = correction.get("id")
-                pos    = correction.get("position", {})
+                obj_id    = correction.get("id")
+                pos       = correction.get("position", {})
+                size      = correction.get("size")
+                rot       = correction.get("rotation") or {}
                 world_pos = self._robot_relative_to_world(pos)
+                rel_rot_z   = rot.get("z")
+                world_rot_z = self.positions.pose.yaw + (rel_rot_z if rel_rot_z is not None else 0.0)
                 ok = self.coordinates.update(
                     obj_id,
                     position=Vec3.from_dict(world_pos),
+                    size    =Vec3.from_dict(size) if size else None,
+                    rotation=Vec3(x=None, y=None, z=round(world_rot_z, 4)),
                 )
                 if ok:
                     summary["corrections_applied"] += 1
