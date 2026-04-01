@@ -41,7 +41,7 @@ except ImportError:
 from map_service        import MapService
 from hint_manager       import HintManager
 from user_turn_builder  import UserTurnBuilder
-from vlm_client         import VlmClient
+from vlm_client         import VlmClient, create_vlm_client
 from robot_client       import RobotClient, ConsoleRobotClient
 from camera_client      import CameraClient, LaptopCameraClient, StaticImageClient
 
@@ -60,6 +60,7 @@ class HexapodApp:
         robot:  RobotClient,
         camera: CameraClient,
         data_dir: str = DATA_DIR,
+        model:     str = "groq",
         on_log:    callable = print,
         on_update: callable = None,   # called after each step with new map image
     ):
@@ -78,7 +79,7 @@ class HexapodApp:
         self._map     = MapService(data_dir=str(base))
         self._hints   = HintManager(str(base / "hints.json"))
         self._builder = UserTurnBuilder(self._map, self._hints)
-        self._vlm     = VlmClient()
+        self._vlm     = create_vlm_client(model)
         self._history: list[dict] = []   # rolling list of last actions
         self._history_max = 5            # how many steps to keep
 
@@ -191,36 +192,38 @@ class HexapodApp:
     # ------------------------------------------------------------------
 
     def _step(self) -> None:
-        with self._lock:
-            self._log("── Capturing frame …")
-            frame = self._camera.capture()
-            if frame is None:
-                self._log("ERROR: Frame capture failed — skipping step.")
-                return
+        update_sent = False
+        try:
+            with self._lock:
+                self._log("── Capturing frame …")
+                frame = self._camera.capture()
+                if frame is None:
+                    self._log("ERROR: Frame capture failed — skipping step.")
+                    return
 
-            # Snapshot of map+camera BEFORE VLM response is applied
-            state_before = self._map.get_state(
-                camera_image   =frame,
-                map_pixel_size =512,
-                combined_width =768,
-            )
-            before_image = state_before.get("combined_image")
+                # Snapshot of map+camera BEFORE VLM response is applied
+                state_before = self._map.get_state(
+                    camera_image   =frame,
+                    map_pixel_size =512,
+                    combined_width =768,
+                )
+                before_image = state_before.get("combined_image")
 
-            self._log("── Building user turn …")
-            turn = self._builder.build(
-                camera_image   =frame,
-                map_pixel_size =512,
-                trace_last_n   =50,
-                combined_width =768,
-                history        =list(self._history),
-            )
+                self._log("── Building user turn …")
+                turn = self._builder.build(
+                    camera_image   =frame,
+                    map_pixel_size =512,
+                    trace_last_n   =50,
+                    combined_width =768,
+                    history        =list(self._history),
+                )
 
-            self._log(f"── Calling VLM ({VlmClient.MODEL}) …")
-            response, raw = self._vlm.call(turn)
+                self._log(f"── Calling VLM ({self._vlm.MODEL}) …")
+                response, raw = self._vlm.call(turn)
 
-            if not response:
-                self._log(f"ERROR: VLM call failed.\n{raw}")
-                return
+                if not response:
+                    self._log(f"ERROR: VLM call failed.\n{raw}")
+                    return
 
             # Persist request + response to data/logs/<timestamp>/
             self._save_request_log(turn, raw, response)
@@ -277,7 +280,11 @@ class HexapodApp:
                 combined_width =768,
             )
             self._on_update(before_image, state_after.get("combined_image"), summary)
-
+            update_sent = True   # success path completed
+        finally:
+            if not update_sent:
+                # Re-enable the Next Step button after any error / early return
+                self._on_update(None, None, {})
 
     def _update_position_from_action(self, action: dict) -> None:
         """
@@ -399,6 +406,9 @@ def main():
                         help="Rotate start position left by N degrees (default: 0)")
     parser.add_argument("--data",  type=str, default=DATA_DIR,
                         help=f"Data directory (default: {DATA_DIR})")
+    parser.add_argument("--model", type=str, default="groq",
+                        choices=["groq", "gemini"],
+                        help="VLM backend: groq (default) or gemini")
     args = parser.parse_args()
 
     # Select camera + robot backend
@@ -419,7 +429,7 @@ def main():
         camera = LaptopCameraClient(device_index=0)
         robot  = ConsoleRobotClient()
 
-    app = HexapodApp(robot=robot, camera=camera, data_dir=args.data)
+    app = HexapodApp(robot=robot, camera=camera, data_dir=args.data, model=args.model)
 
     if args.gui:
         # Import here so GUI is optional

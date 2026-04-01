@@ -111,7 +111,7 @@ class UserTurnBuilder:
         if combined_image is not None and PIL_AVAILABLE:
             parts.append({
                 "inline_data": {
-                    "mime_type": "image/png",
+                    "mime_type": "image/jpeg",
                     "data": self._image_to_base64(combined_image),
                 }
             })
@@ -161,7 +161,7 @@ class UserTurnBuilder:
     @staticmethod
     def _image_to_base64(image: "Image.Image") -> str:
         buf = BytesIO()
-        image.save(buf, format="PNG")
+        image.save(buf, format="JPEG", quality=85)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
