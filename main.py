@@ -66,7 +66,7 @@ class HexapodApp:
         self._robot   = robot
         self._camera  = camera
         self._on_log  = on_log
-        self._on_update = on_update or (lambda img, summary: None)
+        self._on_update = on_update or (lambda before, after, summary: None)
         self._lock    = threading.Lock()
         self._running = False
 
@@ -160,7 +160,7 @@ class HexapodApp:
             self._map.positions.save()
             state = self._map.get_state(map_pixel_size=512, combined_width=768)
         self._log(f"Pose rotated {delta_deg:+.0f}° → yaw={math.degrees(new_yaw):.1f}°")
-        self._on_update(state.get("combined_image"), {})
+        self._on_update(None, state.get("combined_image"), {})
 
     def get_hints(self) -> dict:
         return self._hints.as_dict()
@@ -185,6 +185,14 @@ class HexapodApp:
             if frame is None:
                 self._log("ERROR: Frame capture failed — skipping step.")
                 return
+
+            # Snapshot of map+camera BEFORE VLM response is applied
+            state_before = self._map.get_state(
+                camera_image   =frame,
+                map_pixel_size =512,
+                combined_width =768,
+            )
+            before_image = state_before.get("combined_image")
 
             self._log("── Building user turn …")
             turn = self._builder.build(
@@ -247,13 +255,16 @@ class HexapodApp:
 
             self._map.save_all()
 
-            # Notify GUI
-            state = self._map.get_state(
-                camera_image   =frame,
+            # Capture a fresh frame AFTER movement for the "current" panel
+            after_frame = self._camera.capture() or frame
+
+            # Notify GUI with before + after images
+            state_after = self._map.get_state(
+                camera_image   =after_frame,
                 map_pixel_size =512,
                 combined_width =768,
             )
-            self._on_update(state.get("combined_image"), summary)
+            self._on_update(before_image, state_after.get("combined_image"), summary)
 
 
     def _update_position_from_action(self, action: dict) -> None:

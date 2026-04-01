@@ -60,7 +60,7 @@ class AI2ThorBridge:
 
     def __init__(
         self,
-        scene:                 str            = "FloorPlan1",
+        scene:                 str            = "FloorPlan201",
         image_size:            int            = 640,
         local_executable_path: Optional[str]  = None,
         start_back_m:          float          = 0.0,
@@ -90,6 +90,10 @@ class AI2ThorBridge:
                 width=self._image_size,
                 height=self._image_size,
                 fieldOfView=60,
+                agentMode="default",    # explicit: overrides RoboTHOR default (locobot)
+                snapToGrid=False,       # kein Gitter-Snapping
+                gridSize=0.05,
+                cameraY=0.25,
                 renderDepthImage=False,
                 renderInstanceSegmentation=False,
             )
@@ -277,7 +281,13 @@ class AI2ThorRobotClient(RobotClient):
                                             degrees=float(angle_deg))
 
         status = "OK" if success else "BLOCKED (collision?)"
-        msg = f"[AI2-THOR] {action_type.upper()} — {status}"
+        if action_type in ("forward", "backward"):
+            detail = f"{distance_m * 100:.0f} cm"
+        elif action_type in ("turn_left", "turn_right"):
+            detail = f"{angle_deg:.0f}°"
+        else:
+            detail = ""
+        msg = f"[AI2-THOR] {action_type.upper()}{' ' + detail if detail else ''} — {status}"
         if reason:
             msg += f"\n           Reason: {reason}"
         print(msg)

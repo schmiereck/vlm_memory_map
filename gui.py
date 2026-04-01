@@ -4,16 +4,15 @@ gui.py
 Tkinter GUI for the hexapod spatial memory system.
 
 Layout:
-┌──────────────────────────────┬──────────────────────┐
-│  Combined Image               │  Objects             │
-│  (camera top, map bottom)     │  ID | Description    │
-│                               │  Color               │
-├──────────────┬────────────────┤  (scrollable list)   │
-│  Log         │  Hints         │                      │
-│  (scrollable)│  entry + list  │                      │
-├──────────────┴────────────────┴──────────────────────┤
-│  [ Next Step ]                         Status label   │
-└───────────────────────────────────────────────────────┘
+┌─────────────────────┬─────────────────────┬──────────────────────┐
+│  Letzter Schritt    │  Aktuell            │  Objects             │
+│  (camera + map)     │  (camera + map)     │  ID | Description    │
+│                     │                     │  Color               │
+├─────────────────────┴──────────┬──────────┤  (scrollable list)   │
+│  Log (scrollable)              │  Hints   │                      │
+├────────────────────────────────┴──────────┴──────────────────────┤
+│  [ Next Step ]  [↺ +5°]  [↻ −5°]                   Status label │
+└──────────────────────────────────────────────────────────────────┘
 
 Requires: tkinter (built-in), Pillow
 """
@@ -33,7 +32,7 @@ except ImportError:
 class HexapodGui:
     """Main application window."""
 
-    IMG_WIDTH  = 768
+    IMG_WIDTH  = 512
     IMG_HEIGHT = 768   # camera (384) + map (384)
     WIN_TITLE  = "Hexapod Spatial Memory"
 
@@ -43,7 +42,7 @@ class HexapodGui:
         self._root.title(self.WIN_TITLE)
         self._root.resizable(True, True)
 
-        self._photo_ref: Optional["ImageTk.PhotoImage"] = None
+        self._photo_refs = {"before": None, "after": None}
         self._step_running = False
 
         self._build_ui()
@@ -60,33 +59,56 @@ class HexapodGui:
 
     def _build_ui(self) -> None:
         root = self._root
-        root.columnconfigure(0, weight=3)   # left: image + log/hints
-        root.columnconfigure(1, weight=1)   # right: objects list
+        root.columnconfigure(0, weight=2)   # left:  "last step" image
+        root.columnconfigure(1, weight=2)   # center: "current" image
+        root.columnconfigure(2, weight=1)   # right:  objects list
         root.rowconfigure(0, weight=3)
         root.rowconfigure(1, weight=2)
         root.rowconfigure(2, weight=0)
 
-        # ── Col 0 / Row 0: combined image ──────────────────────────────
-        img_frame = ttk.Frame(root, relief="sunken", borderwidth=1)
-        img_frame.grid(row=0, column=0, sticky="nsew", padx=(6, 2), pady=(6, 2))
+        # ── Col 0 / Row 0: "last step" image ───────────────────────────
+        before_frame = ttk.LabelFrame(root, text="Letzter Schritt")
+        before_frame.grid(row=0, column=0, sticky="nsew", padx=(6, 2), pady=(6, 2))
+        before_frame.rowconfigure(0, weight=1)
+        before_frame.columnconfigure(0, weight=1)
 
-        self._canvas = tk.Canvas(
-            img_frame,
+        self._canvas_before = tk.Canvas(
+            before_frame,
             width=self.IMG_WIDTH,
             height=self.IMG_HEIGHT,
             bg="#2a2a2a",
         )
-        self._canvas.pack(fill="both", expand=True)
-        self._canvas.create_text(
+        self._canvas_before.pack(fill="both", expand=True)
+        self._canvas_before.create_text(
+            self.IMG_WIDTH // 2, self.IMG_HEIGHT // 2,
+            text="Noch kein Schritt",
+            fill="#888888",
+            font=("Helvetica", 12),
+        )
+
+        # ── Col 1 / Row 0: "current" image ─────────────────────────────
+        after_frame = ttk.LabelFrame(root, text="Aktuell")
+        after_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 2), pady=(6, 2))
+        after_frame.rowconfigure(0, weight=1)
+        after_frame.columnconfigure(0, weight=1)
+
+        self._canvas_after = tk.Canvas(
+            after_frame,
+            width=self.IMG_WIDTH,
+            height=self.IMG_HEIGHT,
+            bg="#2a2a2a",
+        )
+        self._canvas_after.pack(fill="both", expand=True)
+        self._canvas_after.create_text(
             self.IMG_WIDTH // 2, self.IMG_HEIGHT // 2,
             text="No image yet",
             fill="#888888",
-            font=("Helvetica", 14),
+            font=("Helvetica", 12),
         )
 
-        # ── Col 1 / Row 0+1: objects list ──────────────────────────────
+        # ── Col 2 / Row 0+1: objects list ──────────────────────────────
         obj_frame = ttk.LabelFrame(root, text="Objects")
-        obj_frame.grid(row=0, column=1, rowspan=2, sticky="nsew",
+        obj_frame.grid(row=0, column=2, rowspan=2, sticky="nsew",
                        padx=(2, 6), pady=(6, 2))
         obj_frame.rowconfigure(0, weight=1)
         obj_frame.columnconfigure(0, weight=1)
@@ -109,9 +131,10 @@ class HexapodGui:
         self._obj_tree.grid(row=0, column=0, sticky="nsew")
         obj_scroll.grid(row=0, column=1, sticky="ns")
 
-        # ── Col 0 / Row 1: log + hints ─────────────────────────────────
+        # ── Col 0+1 / Row 1: log + hints ───────────────────────────────
         mid_frame = ttk.Frame(root)
-        mid_frame.grid(row=1, column=0, sticky="nsew", padx=(6, 2), pady=2)
+        mid_frame.grid(row=1, column=0, columnspan=2, sticky="nsew",
+                       padx=(6, 2), pady=2)
         mid_frame.columnconfigure(0, weight=2)
         mid_frame.columnconfigure(1, weight=1)
         mid_frame.rowconfigure(0, weight=1)
@@ -161,9 +184,9 @@ class HexapodGui:
         ttk.Button(hint_frame, text="Delete selected",
                    command=self._on_delete_hint).pack(padx=4, pady=(0, 4))
 
-        # ── Row 2 / both cols: controls ────────────────────────────────
+        # ── Row 2 / all cols: controls ──────────────────────────────────
         ctrl_frame = ttk.Frame(root)
-        ctrl_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
+        ctrl_frame.grid(row=2, column=0, columnspan=3, sticky="ew",
                         padx=6, pady=(2, 6))
         ctrl_frame.columnconfigure(3, weight=1)
 
@@ -237,12 +260,14 @@ class HexapodGui:
     # Update callbacks (called from background thread → schedule via after)
     # ------------------------------------------------------------------
 
-    def _on_update(self, combined_image, summary: dict) -> None:
-        self._root.after(0, self._apply_update, combined_image, summary)
+    def _on_update(self, before_image, after_image, summary: dict) -> None:
+        self._root.after(0, self._apply_update, before_image, after_image, summary)
 
-    def _apply_update(self, combined_image, summary: dict) -> None:
-        if combined_image is not None and PIL_AVAILABLE:
-            self._show_image(combined_image)
+    def _apply_update(self, before_image, after_image, summary: dict) -> None:
+        if before_image is not None and PIL_AVAILABLE:
+            self._show_image(self._canvas_before, before_image, "before")
+        if after_image is not None and PIL_AVAILABLE:
+            self._show_image(self._canvas_after, after_image, "after")
         self._refresh_hints()
         self._refresh_objects()
         self._set_status(
@@ -266,14 +291,15 @@ class HexapodGui:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _show_image(self, image: "Image.Image") -> None:
-        cw = self._canvas.winfo_width()  or self.IMG_WIDTH
-        ch = self._canvas.winfo_height() or self.IMG_HEIGHT
+    def _show_image(self, canvas: tk.Canvas, image: "Image.Image", ref_key: str) -> None:
+        cw = canvas.winfo_width()  or self.IMG_WIDTH
+        ch = canvas.winfo_height() or self.IMG_HEIGHT
         img = image.copy()
         img.thumbnail((cw, ch), Image.LANCZOS)
-        self._photo_ref = ImageTk.PhotoImage(img)
-        self._canvas.delete("all")
-        self._canvas.create_image(cw // 2, ch // 2, image=self._photo_ref, anchor="center")
+        photo = ImageTk.PhotoImage(img)
+        self._photo_refs[ref_key] = photo   # keep reference to prevent GC
+        canvas.delete("all")
+        canvas.create_image(cw // 2, ch // 2, image=photo, anchor="center")
 
     def _refresh_hints(self) -> None:
         hints = self._app.get_hints()
@@ -320,7 +346,7 @@ class HexapodGui:
             return
         img = self._app.get_initial_image()
         if img is not None:
-            self._show_image(img)
+            self._show_image(self._canvas_after, img, "after")
         self._refresh_objects()
         obj_count = len(self._app._map.objects)
         self._set_status(f"Objects: {obj_count}  (map loaded from disk)")
