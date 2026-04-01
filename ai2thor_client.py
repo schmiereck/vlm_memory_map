@@ -188,6 +188,35 @@ class AI2ThorBridge:
     # Pose (ground truth from simulator)
     # ------------------------------------------------------------------
 
+    def teleport_to_world(self, our_x: float, our_y: float, our_yaw: float) -> bool:
+        """
+        Teleport the agent to a pose given in our world coordinate frame.
+        Inverse of get_pose(): converts our (x, y, yaw) back to AI2-THOR coords.
+        """
+        if self._ctrl is None or self._start_pos is None:
+            return False
+        init_rad = math.radians(self._start_rot_y)
+        # Rotate displacement back into AI2-THOR world frame
+        dx =  our_x * math.cos(init_rad) + our_y * math.sin(init_rad)
+        dz = -our_x * math.sin(init_rad) + our_y * math.cos(init_rad)
+        thor_x   = self._start_pos["x"] + dx
+        thor_z   = self._start_pos["z"] + dz
+        thor_y   = self._start_pos["y"]
+        thor_rot = self._start_rot_y - math.degrees(our_yaw)
+        event = self._ctrl.step(
+            "TeleportFull",
+            x=thor_x, y=thor_y, z=thor_z,
+            rotation={"x": 0, "y": thor_rot, "z": 0},
+            horizon=0,
+        )
+        ok = bool(event.metadata.get("lastActionSuccess", False))
+        if ok:
+            print(f"[AI2-THOR] Pose restored: "
+                  f"our=({our_x:.2f}, {our_y:.2f}, {math.degrees(our_yaw):.1f}°)")
+        else:
+            print("[AI2-THOR] WARNING: Pose restore blocked by geometry — staying at spawn.")
+        return ok
+
     def get_pose(self) -> tuple[float, float, float]:
         """
         Return current agent pose in our world coordinate frame:
@@ -305,6 +334,10 @@ class AI2ThorRobotClient(RobotClient):
     def get_pose(self) -> tuple[float, float, float]:
         """Ground-truth pose from the simulator (x, y, yaw)."""
         return self._bridge.get_pose()
+
+    def set_pose(self, x: float, y: float, yaw: float) -> None:
+        """Teleport the agent to the given world pose (used to restore state on restart)."""
+        self._bridge.teleport_to_world(x, y, yaw)
 
     def shutdown(self) -> None:
         pass  # bridge.close() is called via AI2ThorCameraClient.close()

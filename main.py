@@ -94,12 +94,26 @@ class HexapodApp:
         ok = self._camera.open()
         if ok:
             self._running = True
-            # Sync starting pose from simulator so yaw=0 = initial heading
-            pose_tuple = self._robot.get_pose()
-            if pose_tuple is not None:
-                x, y, yaw = pose_tuple
-                self._map.positions.move_to(x, y, yaw, action="stop")
-                self._map.positions.save()
+            # Find last meaningful position: search backwards for first non-origin entry.
+            # (Old start() code used to append (0,0,0) on every restart, polluting the trace.)
+            last_real = None
+            for entry in reversed(self._map.positions.get_trace_points()):
+                if abs(entry.x) > 0.001 or abs(entry.y) > 0.001 or abs(entry.yaw) > 0.001:
+                    last_real = entry
+                    break
+
+            if last_real is not None:
+                self._map.positions.set_pose(
+                    last_real.x, last_real.y, last_real.yaw,
+                    action=None, record=False,
+                )
+                self._robot.set_pose(last_real.x, last_real.y, last_real.yaw)
+                self._log(
+                    f"Pose restored: x={last_real.x:.2f} y={last_real.y:.2f} "
+                    f"yaw={math.degrees(last_real.yaw):.1f}°"
+                )
+            else:
+                self._log("No previous movement data — starting at origin")
             self._log("System ready. Press 'Next Step' to start.")
         else:
             self._log("ERROR: Could not open camera.")

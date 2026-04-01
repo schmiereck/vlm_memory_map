@@ -47,6 +47,13 @@ class RobotClient(ABC):
         """
         return None
 
+    def set_pose(self, x: float, y: float, yaw: float) -> None:
+        """
+        Optional: teleport/move the robot to a given world pose on startup.
+        Used to restore the last saved position after a restart.
+        Default implementation is a no-op (e.g. for physical robots).
+        """
+
     def shutdown(self) -> None:
         """Optional cleanup hook called when the application exits."""
 
