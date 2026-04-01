@@ -90,10 +90,10 @@ class AI2ThorBridge:
                 width=self._image_size,
                 height=self._image_size,
                 fieldOfView=60,
-                agentMode="default",    # explicit: overrides RoboTHOR default (locobot)
                 snapToGrid=False,       # kein Gitter-Snapping
                 gridSize=0.05,
-                cameraY=0.25,
+                cameraY=0.25,           # camera height in world coords (v4.x+)
+                agentCameraY=0.25,      # same parameter, older API name (v2/v3)
                 renderDepthImage=False,
                 renderInstanceSegmentation=False,
             )
@@ -101,6 +101,16 @@ class AI2ThorBridge:
                 kwargs["local_executable_path"] = self._local_executable_path
                 print(f"[AI2-THOR] Using local binary: {self._local_executable_path}")
             self._ctrl = Controller(**kwargs)
+            # Explicit Initialize step — some versions ignore cameraY in __init__
+            self._ctrl.step(
+                "Initialize",
+                gridSize=0.05,
+                fieldOfView=60,
+                snapToGrid=False,
+                cameraY=0.25,
+                renderDepthImage=False,
+                renderInstanceSegmentation=False,
+            )
             agent = self._ctrl.last_event.metadata["agent"]
             pos   = agent["position"]
             rot_y = agent["rotation"]["y"]
@@ -124,9 +134,10 @@ class AI2ThorBridge:
 
             self._start_pos   = dict(agent["position"])
             self._start_rot_y = agent["rotation"]["y"]
+            cam_y = self._ctrl.last_event.metadata.get("cameraPosition", {}).get("y", "?")
             print(f"[AI2-THOR] Ready. Start pos: "
                   f"x={self._start_pos['x']:.2f}  z={self._start_pos['z']:.2f}  "
-                  f"rot_y={self._start_rot_y:.1f}°")
+                  f"rot_y={self._start_rot_y:.1f}°  camera_y={cam_y}")
             return True
         except Exception as exc:
             msg = str(exc)

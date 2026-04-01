@@ -106,15 +106,8 @@ class HexapodApp:
         return ok
 
     def get_initial_image(self) -> Optional["Image.Image"]:
-        """
-        Return an initial display image on startup.
-        - If a static test image is configured, return combined (camera + map).
-        - Otherwise return only the map (camera area blank).
-        """
-        camera_image = None
-        if isinstance(self._camera, StaticImageClient):
-            camera_image = self._camera.capture()
-
+        """Return camera frame + map for display immediately after startup."""
+        camera_image = self._camera.capture()
         state = self._map.get_state(
             camera_image   =camera_image,
             map_pixel_size =512,
