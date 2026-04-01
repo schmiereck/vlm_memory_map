@@ -26,6 +26,7 @@ import argparse
 import base64
 import datetime
 import json
+import math
 import sys
 import threading
 from pathlib import Path
@@ -144,6 +145,22 @@ class HexapodApp:
             deleted = self._hints.delete(text, category)
             self._hints.save()
         self._log(f"Removed {deleted} hint(s): {text}")
+
+    def rotate_pose(self, delta_deg: float) -> None:
+        """
+        Manually rotate the robot's stored yaw by delta_deg degrees.
+        Positive = CCW (left), negative = CW (right).
+        Updates the map display immediately — useful for correcting
+        drift between the camera image and the rendered map.
+        """
+        with self._lock:
+            pose = self._map.positions.pose
+            new_yaw = pose.yaw + math.radians(delta_deg)
+            self._map.positions.move_to(pose.x, pose.y, new_yaw, action="correction")
+            self._map.positions.save()
+            state = self._map.get_state(map_pixel_size=512, combined_width=768)
+        self._log(f"Pose rotated {delta_deg:+.0f}° → yaw={math.degrees(new_yaw):.1f}°")
+        self._on_update(state.get("combined_image"), {})
 
     def get_hints(self) -> dict:
         return self._hints.as_dict()

@@ -230,7 +230,7 @@ class CoordinateManager:
         for obj in visible:
             px, py = world_to_pixel(obj.position.x, obj.position.y or 0.0)
             yaw = obj.rotation.z if (obj.rotation and obj.rotation.z is not None) else 0.0
-            rot = yaw - robot_yaw
+            rot = robot_yaw - yaw
 
             # Resolve color from object_colors dict; fall back to default blue
             base_rgb: tuple[int, int, int] = (

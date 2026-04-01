@@ -165,7 +165,7 @@ class HexapodGui:
         ctrl_frame = ttk.Frame(root)
         ctrl_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
                         padx=6, pady=(2, 6))
-        ctrl_frame.columnconfigure(1, weight=1)
+        ctrl_frame.columnconfigure(3, weight=1)
 
         self._step_btn = ttk.Button(
             ctrl_frame, text="▶  Next Step",
@@ -173,9 +173,19 @@ class HexapodGui:
         )
         self._step_btn.grid(row=0, column=0, padx=(0, 8))
 
+        ttk.Button(
+            ctrl_frame, text="↺  +5°",
+            command=lambda: self._on_rotate(5), width=8,
+        ).grid(row=0, column=1, padx=2)
+
+        ttk.Button(
+            ctrl_frame, text="↻  −5°",
+            command=lambda: self._on_rotate(-5), width=8,
+        ).grid(row=0, column=2, padx=(2, 12))
+
         self._status_var = tk.StringVar(value="Not started")
         ttk.Label(ctrl_frame, textvariable=self._status_var,
-                  foreground="#888888").grid(row=0, column=1, sticky="w")
+                  foreground="#888888").grid(row=0, column=3, sticky="w")
 
     # ------------------------------------------------------------------
     # Callbacks registered with HexapodApp
@@ -196,6 +206,11 @@ class HexapodGui:
         self._step_btn.config(state="disabled")
         self._set_status("Running …")
         self._app.trigger_step()
+
+    def _on_rotate(self, delta_deg: float) -> None:
+        threading.Thread(
+            target=self._app.rotate_pose, args=(delta_deg,), daemon=True
+        ).start()
 
     def _on_add_hint(self) -> None:
         text = self._hint_entry.get().strip()

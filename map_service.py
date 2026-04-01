@@ -151,23 +151,29 @@ class MapService:
             ))
             summary["objects_added"] += 1
 
-        # 3. New coordinates (VLM gives robot-relative, transform to world)
+        # 3. New coordinates (VLM gives robot-relative, transform position to world)
         for entry in response.get("add_coordinates", []):
             pos  = entry.get("position", {})
             size = entry.get("size")
             rot  = entry.get("rotation") or {}
             world_pos = self._robot_relative_to_world(pos)
-            # size.x/y are in robot frame (x=right, y=forward).
-            # Store world rotation = robot_yaw + VLM relative rotation so that
-            # the renderer can correctly orient the rectangle regardless of
-            # which direction the robot was facing when it observed the object.
-            rel_rot_z   = rot.get("z")
-            world_rot_z = self.positions.pose.yaw + (rel_rot_z if rel_rot_z is not None else 0.0)
+            # Sizes are kept in robot-relative frame (x=right, y=forward).
+            # The stored rotation encodes the world orientation of the object:
+            #   - If the VLM provides an explicit relative rotation, add it to
+            #     the robot's current yaw to get the world rotation.
+            #   - If no explicit rotation, store None (treated as world-aligned,
+            #     yaw=0). The renderer uses rot = stored_yaw - robot_yaw, so
+            #     world-aligned objects (yaw=0) correctly appear as diamonds
+            #     at -robot_yaw when the robot has turned.
+            rel_rot_z = rot.get("z")
+            rotation = Vec3(x=None, y=None,
+                            z=round(self.positions.pose.yaw + rel_rot_z, 4)) \
+                       if rel_rot_z is not None else None
             self.coordinates.add(ObjectCoordinate(
                 id      =entry["id"],
                 position=Vec3.from_dict(world_pos),
                 size    =Vec3.from_dict(size) if size else None,
-                rotation=Vec3(x=None, y=None, z=round(world_rot_z, 4)),
+                rotation=rotation,
                 area    =entry.get("area"),
             ))
             summary["coordinates_added"] += 1
@@ -192,13 +198,15 @@ class MapService:
                 size      = correction.get("size")
                 rot       = correction.get("rotation") or {}
                 world_pos = self._robot_relative_to_world(pos)
-                rel_rot_z   = rot.get("z")
-                world_rot_z = self.positions.pose.yaw + (rel_rot_z if rel_rot_z is not None else 0.0)
+                rel_rot_z = rot.get("z")
+                rotation  = Vec3(x=None, y=None,
+                                 z=round(self.positions.pose.yaw + rel_rot_z, 4)) \
+                            if rel_rot_z is not None else None
                 ok = self.coordinates.update(
                     obj_id,
                     position=Vec3.from_dict(world_pos),
                     size    =Vec3.from_dict(size) if size else None,
-                    rotation=Vec3(x=None, y=None, z=round(world_rot_z, 4)),
+                    rotation=rotation,
                 )
                 if ok:
                     summary["corrections_applied"] += 1
