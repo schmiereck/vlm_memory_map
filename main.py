@@ -151,7 +151,12 @@ class HexapodApp:
             new_yaw = pose.yaw + math.radians(delta_deg)
             self._map.positions.move_to(pose.x, pose.y, new_yaw, action="correction")
             self._map.positions.save()
-            state = self._map.get_state(map_pixel_size=512, combined_width=768)
+            camera_image = self._camera.capture()
+            state = self._map.get_state(
+                camera_image=camera_image,
+                map_pixel_size=512,
+                combined_width=768,
+            )
         self._log(f"Pose rotated {delta_deg:+.0f}° → yaw={math.degrees(new_yaw):.1f}°")
         self._on_update(None, state.get("combined_image"), {})
 

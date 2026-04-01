@@ -89,11 +89,6 @@ class AI2ThorBridge:
                 scene=self._scene,
                 width=self._image_size,
                 height=self._image_size,
-                fieldOfView=60,
-                snapToGrid=False,       # kein Gitter-Snapping
-                gridSize=0.05,
-                cameraY=0.25,           # camera height in world coords (v4.x+)
-                agentCameraY=0.25,      # same parameter, older API name (v2/v3)
                 renderDepthImage=False,
                 renderInstanceSegmentation=False,
             )
@@ -101,9 +96,13 @@ class AI2ThorBridge:
                 kwargs["local_executable_path"] = self._local_executable_path
                 print(f"[AI2-THOR] Using local binary: {self._local_executable_path}")
             self._ctrl = Controller(**kwargs)
-            # Explicit Initialize step — some versions ignore cameraY in __init__
+            # Explicit Initialize step to apply camera height
+            # (some versions ignore cameraY in __init__)
             self._ctrl.step(
                 "Initialize",
+                agentMode="locobot",    # LoCoBot camera ~0.88 m vs default ~1.58 m
+                capsuleRadius=0.1,      # character controller radius (m)
+                capsuleHeight=0.3,      # character controller height → scales camera Y
                 gridSize=0.05,
                 fieldOfView=60,
                 snapToGrid=False,
@@ -126,7 +125,6 @@ class AI2ThorBridge:
                     x=new_x, y=pos["y"], z=new_z,
                     rotation={"x": 0, "y": new_rot, "z": 0},
                     horizon=0,
-                    standing=True,
                 )
                 if not event.metadata.get("lastActionSuccess", False):
                     print("[AI2-THOR] WARNING: Start teleport blocked — using default spawn.")
