@@ -175,8 +175,22 @@ class GeminiVlmClient:
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 response = self._model.generate_content(content)
-                raw      = response.text
-                parsed   = _parse_json(raw)
+
+                # Check finish_reason before accessing .text
+                # finish_reason 2 = SAFETY, 3 = RECITATION, etc.
+                if response.candidates:
+                    finish_reason = response.candidates[0].finish_reason
+                    if finish_reason not in (0, 1):  # 0=UNSPECIFIED, 1=STOP
+                        last_error = (
+                            f"Attempt {attempt}: Gemini blocked response "
+                            f"(finish_reason={finish_reason}). "
+                            "Try rephrasing the system prompt or image."
+                        )
+                        print(f"[VLM] {last_error}")
+                        continue
+
+                raw    = response.text
+                parsed = _parse_json(raw)
                 if parsed is not None:
                     return parsed, raw
                 last_error = f"Attempt {attempt}: JSON parse failed.\nRaw: {raw[:300]}"
