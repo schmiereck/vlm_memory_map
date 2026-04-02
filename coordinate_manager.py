@@ -266,6 +266,9 @@ class CoordinateManager:
         # 5. Robot (always on top)
         self._draw_robot(draw, rpx, rpy, pixel_size)
 
+        # 6. Coordinate cross (top-right, rotates with map)
+        self._draw_coord_cross(draw, pixel_size, robot_yaw, label_font)
+
         return img
 
     # ------------------------------------------------------------------
@@ -320,6 +323,55 @@ class CoordinateManager:
         cone_draw.polygon(points, fill=(100, 200, 255, 55), outline=(60, 160, 220, 140))
         merged = Image.alpha_composite(img.convert("RGBA"), cone_layer)
         img.paste(merged.convert("RGB"))
+
+    @staticmethod
+    def _draw_coord_cross(draw, pixel_size, robot_yaw, font):
+        """Draw a world-axis cross in the top-right corner.
+
+        The arrows rotate with the map so that they always point toward
+        world X+ (East) and world Y+ (North) — i.e. they visually match
+        the grid that is already being rotated by -robot_yaw.
+        """
+        cx = pixel_size - 52
+        cy = 52
+        arm = 28          # arrow length in pixels
+        hw  = 5           # arrowhead half-width
+        aw  = 9           # arrowhead length
+
+        # Directions in canvas coordinates (y-down):
+        #   world Y+ (North): (sin(yaw), -cos(yaw))
+        #   world X+ (East):  (cos(yaw),  sin(yaw))
+        axes = [
+            (math.cos(robot_yaw),  math.sin(robot_yaw), (200, 70,  30), "x+"),  # East
+            (math.sin(robot_yaw), -math.cos(robot_yaw), ( 30, 150,  50), "y+"),  # North
+        ]
+
+        # White background disc
+        r_bg = arm + 16
+        draw.ellipse([cx - r_bg, cy - r_bg, cx + r_bg, cy + r_bg],
+                     fill=(255, 255, 255), outline=(190, 190, 190))
+
+        # Centre dot
+        draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(80, 80, 80))
+
+        for ux, uy, color, label in axes:
+            # Arrow shaft (stopping short of the tip)
+            sx = cx + ux * (arm - aw)
+            sy = cy + uy * (arm - aw)
+            draw.line([(cx, cy), (sx, sy)], fill=color, width=2)
+
+            # Arrowhead triangle
+            tip   = (cx + ux * arm,            cy + uy * arm)
+            left  = (sx - uy * hw,             sy + ux * hw)
+            right = (sx + uy * hw,             sy - ux * hw)
+            draw.polygon([tip, left, right], fill=color)
+
+            # Label beyond the tip
+            lx = cx + ux * (arm + 12)
+            ly = cy + uy * (arm + 12)
+            bbox = draw.textbbox((0, 0), label, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text((lx - tw // 2, ly - th // 2), label, fill=color, font=font)
 
     @staticmethod
     def _draw_robot(draw, rx, ry, pixel_size):

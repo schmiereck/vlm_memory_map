@@ -271,9 +271,27 @@ class MapService:
         """
         pose = self.positions.pose
 
+        # Map-orientation hint: how far world axes are rotated from screen-top.
+        # The map is robot-centred (robot always faces screen-top).
+        # Positive angles = clockwise from screen-top.
+        yaw_deg = math.degrees(pose.yaw) % 360
+
         # State dicts
         state = {
-            "robot": {"x": pose.x, "y": pose.y, "yaw": pose.yaw},
+            "robot": {
+                "x": pose.x,
+                "y": pose.y,
+                "yaw": pose.yaw,
+                "map_orientation": {
+                    "note": (
+                        "Map is robot-centred: robot always faces screen-top. "
+                        "A coordinate cross in the top-right corner shows the "
+                        "current world-axis directions."
+                    ),
+                    "world_y_plus_cw_from_screen_top_deg": round(yaw_deg, 1),
+                    "world_x_plus_cw_from_screen_top_deg": round((yaw_deg + 90) % 360, 1),
+                },
+            },
             "objects":     [o.to_dict() for o in self.objects.get_all(area=area)],
             "coordinates": [c.to_dict() for c in self.coordinates.get_all(area=area)],
             "relations":   [r.to_dict() for r in self.relations.get_all(area=area)],
