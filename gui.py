@@ -181,8 +181,13 @@ class HexapodGui:
             bg="#1e1e1e", fg="#cccccc", selectmode="single",
         )
         self._hint_list.pack(fill="both", expand=True, padx=4, pady=(0, 2))
-        ttk.Button(hint_frame, text="Delete selected",
-                   command=self._on_delete_hint).pack(padx=4, pady=(0, 4))
+
+        btn_frame = ttk.Frame(hint_frame)
+        btn_frame.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Button(btn_frame, text="Delete selected",
+                   command=self._on_delete_hint).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="Clear all",
+                   command=self._on_clear_hints).pack(side="left")
 
         # ── Row 2 / all cols: controls ──────────────────────────────────
         ctrl_frame = ttk.Frame(root)
@@ -254,6 +259,10 @@ class HexapodGui:
             cat, text = line.split("] ", 1)
             cat = cat.lstrip("[")
             self._app.remove_hint(text, cat)
+        self._refresh_hints()
+
+    def _on_clear_hints(self) -> None:
+        self._app.clear_hints()
         self._refresh_hints()
 
     # ------------------------------------------------------------------

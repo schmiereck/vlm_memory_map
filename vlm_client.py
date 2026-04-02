@@ -144,7 +144,7 @@ class GeminiVlmClient:
     """Google Gemini backend."""
 
     MODEL       = "models/gemini-robotics-er-1.5-preview"
-    MAX_TOKENS  = 2048
+    MAX_TOKENS  = 8192
     MAX_RETRIES = 3
 
     def __init__(self, api_key: Optional[str] = None):
@@ -177,14 +177,20 @@ class GeminiVlmClient:
                 response = self._model.generate_content(content)
 
                 # Check finish_reason before accessing .text
-                # finish_reason 2 = SAFETY, 3 = RECITATION, etc.
+                # Gemini FinishReason: 1=STOP, 2=MAX_TOKENS, 3=SAFETY, 4=RECITATION
                 if response.candidates:
                     finish_reason = response.candidates[0].finish_reason
-                    if finish_reason not in (0, 1):  # 0=UNSPECIFIED, 1=STOP
+                    if finish_reason == 2:  # MAX_TOKENS — response truncated
+                        last_error = (
+                            f"Attempt {attempt}: Gemini hit token limit "
+                            f"(finish_reason=MAX_TOKENS). Response was truncated."
+                        )
+                        print(f"[VLM] {last_error}")
+                        continue
+                    elif finish_reason not in (0, 1):  # SAFETY, RECITATION, OTHER
                         last_error = (
                             f"Attempt {attempt}: Gemini blocked response "
-                            f"(finish_reason={finish_reason}). "
-                            "Try rephrasing the system prompt or image."
+                            f"(finish_reason={finish_reason})."
                         )
                         print(f"[VLM] {last_error}")
                         continue

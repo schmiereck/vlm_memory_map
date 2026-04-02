@@ -154,6 +154,13 @@ class HexapodApp:
             self._hints.save()
         self._log(f"Removed {deleted} hint(s): {text}")
 
+    def clear_hints(self) -> None:
+        """Remove all hints (all categories)."""
+        with self._lock:
+            self._hints.clear_all()
+            self._hints.save()
+        self._log("All hints cleared.")
+
     def rotate_pose(self, delta_deg: float) -> None:
         """
         Manually rotate the robot's stored yaw by delta_deg degrees.
