@@ -59,9 +59,10 @@ class HexapodApp:
         self,
         robot:  RobotClient,
         camera: CameraClient,
-        data_dir:     str = DATA_DIR,
-        model:        str = "groq",
-        ollama_model: str = "",
+        data_dir:     str  = DATA_DIR,
+        model:        str  = "groq",
+        ollama_model: str  = "",
+        no_image:     bool = False,
         on_log:       callable = print,
         on_update:    callable = None,   # called after each step with new map image
     ):
@@ -69,8 +70,9 @@ class HexapodApp:
         self._camera  = camera
         self._on_log  = on_log
         self._on_update = on_update or (lambda before, after, summary: None)
-        self._lock    = threading.Lock()
-        self._running = False
+        self._lock     = threading.Lock()
+        self._running  = False
+        self._no_image = no_image
 
         # Core components
         base = Path(data_dir)
@@ -129,7 +131,10 @@ class HexapodApp:
             map_pixel_size =512,
             combined_width =768,
         )
-        return state.get("combined_image")
+        img = state.get("combined_image")
+        if img is None:
+            self._log("[WARNING] get_initial_image: combined_image is None")
+        return img
 
     def trigger_step(self) -> None:
         """
@@ -219,11 +224,12 @@ class HexapodApp:
 
                 self._log("── Building user turn …")
                 turn = self._builder.build(
-                    camera_image   =frame,
+                    camera_image   =None if self._no_image else frame,
                     map_pixel_size =512,
                     trace_last_n   =50,
                     combined_width =768,
                     history        =list(self._history),
+                    no_image_note  =self._no_image,
                 )
 
                 self._log(f"── Calling VLM ({self._vlm.MODEL}) …")
@@ -428,7 +434,12 @@ def main():
     parser.add_argument("--ollama-model", type=str, default="",
                         dest="ollama_model",
                         help="Ollama model name (default: gemma3n:e2b). Only used with --model ollama. "
-                             "Examples: gemma3n:e2b, gemma3n:e4b, gemma3:4b")
+                             "Vision models: gemma4:e2b, gemma3:4b, qwen3-vl:2b. "
+                             "Text-only: qwen3.5:0.8b (use with --no-image)")
+    parser.add_argument("--no-image", action="store_true",
+                        dest="no_image",
+                        help="Send only JSON state to VLM, no camera/map image. "
+                             "Required for text-only models like qwen3.5:0.8b")
     parser.add_argument("--steps", type=int, default=0,
                         help="Run N steps headlessly then exit (0 = interactive)")
     parser.add_argument("--hint", type=str, action="append", default=[],
@@ -465,7 +476,8 @@ def main():
         robot  = ConsoleRobotClient()
 
     app = HexapodApp(robot=robot, camera=camera, data_dir=data_dir,
-                     model=args.model, ollama_model=args.ollama_model)
+                     model=args.model, ollama_model=args.ollama_model,
+                     no_image=args.no_image)
 
     # Pre-load hints from --hint arguments
     for hint_text in args.hint:

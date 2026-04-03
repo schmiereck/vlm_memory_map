@@ -57,6 +57,7 @@ class UserTurnBuilder:
         trace_last_n:    Optional[int]  = 50,
         combined_width:  int   = 768,
         history:         Optional[list] = None,
+        no_image_note:   bool  = False,
     ) -> list[dict]:
         """
         Build and return the user-turn as a list of Gemini content parts.
@@ -108,7 +109,14 @@ class UserTurnBuilder:
 
         # Image part
         combined_image = state.get("combined_image")
-        if combined_image is not None and PIL_AVAILABLE:
+        if no_image_note:
+            parts.append({
+                "text": (
+                    "[No image available in this step — text-only mode. "
+                    "Base your decisions solely on the JSON state below.]"
+                )
+            })
+        elif combined_image is not None and PIL_AVAILABLE:
             parts.append({
                 "inline_data": {
                     "mime_type": "image/jpeg",

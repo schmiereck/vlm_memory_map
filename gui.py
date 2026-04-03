@@ -301,8 +301,10 @@ class HexapodGui:
     # ------------------------------------------------------------------
 
     def _show_image(self, canvas: tk.Canvas, image: "Image.Image", ref_key: str) -> None:
-        cw = canvas.winfo_width()  or self.IMG_WIDTH
-        ch = canvas.winfo_height() or self.IMG_HEIGHT
+        cw = canvas.winfo_width()
+        ch = canvas.winfo_height()
+        if cw < 10: cw = self.IMG_WIDTH
+        if ch < 10: ch = self.IMG_HEIGHT
         img = image.copy()
         img.thumbnail((cw, ch), Image.LANCZOS)
         photo = ImageTk.PhotoImage(img)
@@ -353,9 +355,19 @@ class HexapodGui:
     def _show_initial_image(self) -> None:
         if not PIL_AVAILABLE:
             return
-        img = self._app.get_initial_image()
+        # Canvas may not be laid out yet — retry until it has a real size
+        if self._canvas_after.winfo_width() < 10:
+            self._root.after(150, self._show_initial_image)
+            return
+        try:
+            img = self._app.get_initial_image()
+        except Exception as e:
+            self._log(f"[GUI] Initial image error: {e}")
+            return
         if img is not None:
             self._show_image(self._canvas_after, img, "after")
+        else:
+            self._log("[GUI] Initial image returned None")
         self._refresh_objects()
         obj_count = len(self._app._map.objects)
         self._set_status(f"Objects: {obj_count}  (map loaded from disk)")

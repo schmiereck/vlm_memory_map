@@ -241,7 +241,7 @@ class OllamaVlmClient:
 
     BASE_URL      = "http://localhost:11434"
     DEFAULT_MODEL = "gemma3n:e2b"
-    MAX_TOKENS    = 8192
+    MAX_TOKENS    = 16384   # thinking models need extra budget for reasoning tokens
     MAX_RETRIES   = 3
 
     def __init__(self, model: str = DEFAULT_MODEL):
@@ -292,12 +292,53 @@ class OllamaVlmClient:
                     raise RuntimeError(
                         f"HTTP {resp.status_code}: {resp.text.strip()[:200]}"
                     )
-                raw    = resp.json()["message"]["content"]
+                data = resp.json()
+                msg  = data.get("message", {})
+                raw  = msg.get("content", "").strip()
+
+                # Thinking models (e.g. gemma4) put reasoning in "thinking" and
+                # the actual reply in "content". If content is empty but thinking
+                # is not, the model ran out of tokens mid-think — log and retry.
+                if not raw:
+                    thinking    = msg.get("thinking", "")
+                    done_reason = data.get("done_reason", "unknown")
+                    if thinking and done_reason == "length":
+                        last_error = (
+                            f"Attempt {attempt}: thinking model ran out of tokens "
+                            f"before producing output (done_reason=length). "
+                            f"Thinking excerpt: {thinking[:150]!r}"
+                        )
+                    else:
+                        last_error = (
+                            f"Attempt {attempt}: empty response "
+                            f"(done_reason={done_reason})."
+                        )
+                    print(f"[VLM] {last_error}")
+                    # On retry, strip images to reduce context pressure
+                    if attempt == 1 and images:
+                        print("[VLM] Retrying without image to reduce context size...")
+                        payload["messages"][-1] = {
+                            "role":    "user",
+                            "content": message["content"] + "\n[Image omitted on retry]",
+                        }
+                    continue
+
                 parsed = _parse_json(raw)
                 if parsed is not None:
                     return parsed, raw
+
+                # JSON parse failed — append correction and retry (like Groq backend)
                 last_error = f"Attempt {attempt}: JSON parse failed.\nRaw: {raw[:300]}"
                 print(f"[VLM] {last_error}")
+                payload["messages"].append({"role": "assistant", "content": raw})
+                payload["messages"].append({
+                    "role":    "user",
+                    "content": (
+                        "Your previous response was not valid JSON. "
+                        "Output the JSON object only — no prose, no markdown, "
+                        "no backticks, no explanation. Start with { and end with }."
+                    ),
+                })
             except Exception as e:
                 last_error = f"Attempt {attempt}: API error — {e}"
                 print(f"[VLM] {last_error}")
