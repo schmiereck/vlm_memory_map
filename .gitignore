@@ -2,3 +2,5 @@
 /old/
 /old*/
 /__pycache__/
+/.venv/
+*.pyc

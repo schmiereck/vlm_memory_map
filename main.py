@@ -59,10 +59,11 @@ class HexapodApp:
         self,
         robot:  RobotClient,
         camera: CameraClient,
-        data_dir: str = DATA_DIR,
-        model:     str = "groq",
-        on_log:    callable = print,
-        on_update: callable = None,   # called after each step with new map image
+        data_dir:     str = DATA_DIR,
+        model:        str = "groq",
+        ollama_model: str = "",
+        on_log:       callable = print,
+        on_update:    callable = None,   # called after each step with new map image
     ):
         self._robot   = robot
         self._camera  = camera
@@ -79,7 +80,7 @@ class HexapodApp:
         self._map     = MapService(data_dir=str(base))
         self._hints   = HintManager(str(base / "hints.json"))
         self._builder = UserTurnBuilder(self._map, self._hints)
-        self._vlm     = create_vlm_client(model)
+        self._vlm     = create_vlm_client(model, ollama_model)
         self._history: list[dict] = []   # rolling list of last actions
         self._history_max = 5            # how many steps to keep
 
@@ -394,6 +395,12 @@ class HexapodApp:
 # ----------------------------------------------------------------------
 
 def main():
+    # Ensure UTF-8 output on Windows (default console uses cp1252)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Hexapod Spatial Memory System")
     parser.add_argument("--gui",   action="store_true", help="Launch with GUI")
     parser.add_argument("--image", type=str, default=None,
@@ -413,10 +420,31 @@ def main():
                         help="Rotate start position left by N degrees (default: 0)")
     parser.add_argument("--data",  type=str, default=DATA_DIR,
                         help=f"Data directory (default: {DATA_DIR})")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Rename existing data dir to data-<timestamp> and start fresh")
     parser.add_argument("--model", type=str, default="groq",
-                        choices=["groq", "gemini"],
-                        help="VLM backend: groq (default) or gemini")
+                        choices=["groq", "gemini", "ollama"],
+                        help="VLM backend: groq (default), gemini, or ollama (local)")
+    parser.add_argument("--ollama-model", type=str, default="",
+                        dest="ollama_model",
+                        help="Ollama model name (default: gemma3n:e2b). Only used with --model ollama. "
+                             "Examples: gemma3n:e2b, gemma3n:e4b, gemma3:4b")
+    parser.add_argument("--steps", type=int, default=0,
+                        help="Run N steps headlessly then exit (0 = interactive)")
+    parser.add_argument("--hint", type=str, action="append", default=[],
+                        help="Add a one-time hint before starting (can be repeated)")
     args = parser.parse_args()
+
+    # --fresh: archive existing data dir
+    data_dir = args.data
+    if args.fresh:
+        src = Path(data_dir)
+        if src.exists():
+            from datetime import datetime
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dst = src.parent / f"{src.name}-{stamp}"
+            src.rename(dst)
+            print(f"[fresh] Archived {src} -> {dst}")
 
     # Select camera + robot backend
     if args.thor:
@@ -436,7 +464,12 @@ def main():
         camera = LaptopCameraClient(device_index=0)
         robot  = ConsoleRobotClient()
 
-    app = HexapodApp(robot=robot, camera=camera, data_dir=args.data, model=args.model)
+    app = HexapodApp(robot=robot, camera=camera, data_dir=data_dir,
+                     model=args.model, ollama_model=args.ollama_model)
+
+    # Pre-load hints from --hint arguments
+    for hint_text in args.hint:
+        app.add_hint(hint_text, "one_time")
 
     if args.gui:
         # Import here so GUI is optional
@@ -446,8 +479,25 @@ def main():
             print(f"ERROR: Could not import GUI: {e}")
             sys.exit(1)
         HexapodGui(app).run()
+    elif args.steps > 0:
+        # Batch mode: run N steps synchronously, then exit
+        print(f"=== Hexapod Spatial Memory — batch mode ({args.steps} steps) ===")
+        if args.hint:
+            print(f"Hints: {args.hint}")
+
+        if not app.start():
+            sys.exit(1)
+
+        try:
+            for i in range(1, args.steps + 1):
+                print(f"\n--- Step {i}/{args.steps} ---")
+                app._step()
+        except KeyboardInterrupt:
+            print("\nInterrupted.")
+        finally:
+            app.shutdown()
     else:
-        # Minimal CLI mode: manual trigger via Enter key
+        # Interactive CLI mode
         print("=== Hexapod Spatial Memory — CLI mode ===")
         print("Commands:  [Enter] = next step   h <text> = add one-time hint   q = quit")
 
@@ -462,9 +512,7 @@ def main():
                 elif cmd.lower().startswith("h "):
                     app.add_hint(cmd[2:].strip(), "one_time")
                 elif cmd == "":
-                    app.trigger_step()
-                    # Wait for the background thread to finish
-                    import time; time.sleep(0.5)
+                    app._step()
                 else:
                     print("Unknown command. Enter = step, h <text> = hint, q = quit")
         except KeyboardInterrupt:

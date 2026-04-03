@@ -1,11 +1,13 @@
 """
 vlm_client.py
 =============
-VLM backends: Groq (Llama 4 Scout) and Google Gemini.
+VLM backends: Groq (Llama 4 Scout), Google Gemini, and local Ollama.
 
 Usage:
-    client = create_vlm_client("groq")    # default
-    client = create_vlm_client("gemini")  # needs GEMINI_API_KEY
+    client = create_vlm_client("groq")              # default
+    client = create_vlm_client("gemini")             # needs GEMINI_API_KEY
+    client = create_vlm_client("ollama")             # local Ollama, default model
+    client = create_vlm_client("ollama", model="gemma3:4b")
 
 Both expose the same interface:
     response_dict, raw_text = client.call(turn_parts)
@@ -221,16 +223,102 @@ class GeminiVlmClient:
 
 
 # ----------------------------------------------------------------------
+# Ollama backend  (local)
+# ----------------------------------------------------------------------
+
+class OllamaVlmClient:
+    """Local Ollama backend — no API key required.
+
+    Requires Ollama running at localhost:11434.
+    Vision-capable models tested:
+      gemma3n:e2b  — Gemma 3n Effective-2B, 5.6 GB  (recommended)
+      gemma3n:e4b  — Gemma 3n Effective-4B, 9.8 GB
+      gemma3:4b    — Gemma 3 4B, 3.3 GB
+
+    Install:  https://ollama.com
+    Pull:     ollama pull gemma3n:e2b
+    """
+
+    BASE_URL      = "http://localhost:11434"
+    DEFAULT_MODEL = "gemma3n:e2b"
+    MAX_TOKENS    = 8192
+    MAX_RETRIES   = 3
+
+    def __init__(self, model: str = DEFAULT_MODEL):
+        try:
+            import requests as _req
+            self._requests = _req
+        except ImportError:
+            raise ImportError("requests not installed. Run: pip install requests")
+        self._model = model
+        self.MODEL  = model   # expose as attribute for logging (matches other clients)
+
+    def call(self, turn_parts: list[dict]) -> tuple[dict, str]:
+        # Split parts into images (base64) and text
+        images: list[str] = []
+        texts:  list[str] = []
+        for part in turn_parts:
+            if "inline_data" in part:
+                images.append(part["inline_data"]["data"])
+            elif "text" in part:
+                texts.append(part["text"])
+
+        message: dict = {
+            "role":    "user",
+            "content": "\n\n".join(texts),
+        }
+        if images:
+            message["images"] = images
+
+        payload = {
+            "model":  self._model,
+            "stream": False,
+            "options": {"num_predict": self.MAX_TOKENS, "temperature": 0.2},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                message,
+            ],
+        }
+
+        last_error = ""
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                resp = self._requests.post(
+                    f"{self.BASE_URL}/api/chat",
+                    json=payload,
+                    timeout=600,
+                )
+                if not resp.ok:
+                    raise RuntimeError(
+                        f"HTTP {resp.status_code}: {resp.text.strip()[:200]}"
+                    )
+                raw    = resp.json()["message"]["content"]
+                parsed = _parse_json(raw)
+                if parsed is not None:
+                    return parsed, raw
+                last_error = f"Attempt {attempt}: JSON parse failed.\nRaw: {raw[:300]}"
+                print(f"[VLM] {last_error}")
+            except Exception as e:
+                last_error = f"Attempt {attempt}: API error — {e}"
+                print(f"[VLM] {last_error}")
+        return {}, f"[VLM] Failed after {self.MAX_RETRIES} attempts. Last error: {last_error}"
+
+
+# ----------------------------------------------------------------------
 # Factory
 # ----------------------------------------------------------------------
 
-def create_vlm_client(backend: str = "groq") -> "VlmClient | GeminiVlmClient":
+def create_vlm_client(backend: str = "groq", model: str = "") -> object:
     """
     Instantiate the right VLM client.
 
     Args:
-        backend: "groq" (default) or "gemini"
+        backend: "groq" (default), "gemini", or "ollama"
+        model:   Optional model override (only used by ollama backend).
     """
     if backend == "gemini":
         return GeminiVlmClient()
+    if backend == "ollama":
+        m = model or OllamaVlmClient.DEFAULT_MODEL
+        return OllamaVlmClient(model=m)
     return VlmClient()
